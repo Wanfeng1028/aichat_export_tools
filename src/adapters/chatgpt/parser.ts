@@ -10,6 +10,10 @@ function normalizeRole(role: string | null): MessageRole {
   return 'user';
 }
 
+function normalizeHtml(html: string): string {
+  return html.replace(/\u0000/g, '').trim();
+}
+
 function inferRole(node: Element, index: number): MessageRole {
   const directRole = node.getAttribute('data-message-author-role');
   if (directRole) {
@@ -21,7 +25,7 @@ function inferRole(node: Element, index: number): MessageRole {
     return normalizeRole(nestedRoleNode.getAttribute('data-message-author-role'));
   }
 
-  const dataTestId = (node.getAttribute('data-testid') ?? '').toLowerCase();
+  const dataTestId = `${node.getAttribute('data-testid') ?? ''} ${node.className ?? ''}`.toLowerCase();
   if (dataTestId.includes('assistant')) return 'assistant';
   if (dataTestId.includes('user')) return 'user';
 
@@ -38,17 +42,19 @@ function inferRole(node: Element, index: number): MessageRole {
 
 function extractMessageContent(node: Element): { text: string; html: string } {
   const candidates = [
-    node.querySelector('[data-message-author-role]'),
     node.querySelector('[data-testid="conversation-turn-content"]'),
     node.querySelector('[data-testid*="conversation-turn-content"]'),
-    node.querySelector('.markdown'),
+    node.querySelector('[data-message-author-role]'),
     node.querySelector('[class*="markdown"]'),
+    node.querySelector('.markdown'),
+    node.querySelector('[data-testid*="message-content"]'),
+    node.querySelector('article'),
     node
   ].filter(Boolean) as Element[];
 
   for (const candidate of candidates) {
     const text = sanitizePlainText(candidate.textContent ?? '');
-    const html = candidate.innerHTML;
+    const html = normalizeHtml(candidate.innerHTML);
     if (text || html) {
       return { text, html };
     }
@@ -62,7 +68,7 @@ function buildMessage(node: Element, index: number): ChatMessage {
   const { text, html } = extractMessageContent(node);
 
   return {
-    id: `msg-${index + 1}`,
+    id: node.getAttribute('data-message-id') ?? `msg-${index + 1}`,
     role,
     text,
     html,
@@ -76,6 +82,46 @@ function normalizeConversationUrl(href: string): string {
   } catch {
     return href;
   }
+}
+
+function uniqueTopLevelNodes(nodes: Element[], main: Element | null): Element[] {
+  const filtered = main ? nodes.filter((node) => main.contains(node)) : nodes;
+  return filtered.filter((node, index) => !filtered.some((candidate, candidateIndex) => candidateIndex !== index && candidate.contains(node)));
+}
+
+function extractStructuredMessages(documentRef: Document): ChatMessage[] {
+  const main = documentRef.querySelector(chatGptSelectors.main);
+  const rawNodes = Array.from(documentRef.querySelectorAll(chatGptSelectors.conversationTurns));
+  const uniqueNodes = uniqueTopLevelNodes(rawNodes, main);
+  return uniqueNodes.map(buildMessage).filter((message) => message.text.length > 0 || Boolean(message.html));
+}
+
+function createSnapshotMessage(documentRef: Document): ChatMessage[] {
+  const main = documentRef.querySelector(chatGptSelectors.main);
+  if (!main) {
+    return [];
+  }
+
+  const clone = main.cloneNode(true) as HTMLElement;
+  for (const selector of ['nav', 'aside', 'form', 'textarea', 'button', '[role="dialog"]', '[aria-live]', '[data-testid*="composer"]']) {
+    clone.querySelectorAll(selector).forEach((node) => node.remove());
+  }
+
+  const html = normalizeHtml(clone.innerHTML);
+  const text = sanitizePlainText(clone.textContent ?? '');
+  if (!text && !html) {
+    return [];
+  }
+
+  return [
+    {
+      id: 'snapshot-1',
+      role: 'assistant',
+      text,
+      html,
+      attachments: []
+    }
+  ];
 }
 
 export function scanChatGptConversationList(documentRef: Document = document): ConversationSummary[] {
@@ -119,9 +165,8 @@ export function parseChatGptConversation(documentRef: Document = document): Chat
     sanitizePlainText(documentRef.title.replace(/\s*[-|].*$/, '')) ||
     'ChatGPT Conversation';
 
-  const rawNodes = Array.from(documentRef.querySelectorAll(chatGptSelectors.conversationTurns));
-  const uniqueNodes = rawNodes.filter((node, index) => rawNodes.findIndex((candidate) => candidate === node || candidate.contains(node)) === index);
-  const messages = uniqueNodes.map(buildMessage).filter((message) => message.text.length > 0 || Boolean(message.html));
+  const structuredMessages = extractStructuredMessages(documentRef);
+  const messages = structuredMessages.length > 0 ? structuredMessages : createSnapshotMessage(documentRef);
 
   return {
     id: currentId,

@@ -105,6 +105,20 @@ function createJobRecord(seed: { id: string; site: ChatConversation['site']; tit
   return { id: `${seed.id}-${format}-${seed.exportedAt}`, site: seed.site, conversationId: seed.id, title: seed.title, format, status: 'queued', createdAt: now, updatedAt: now };
 }
 
+function createBatchJobRecord(site: ChatConversation['site'], format: ExportFormat, conversationCount: number): ExportJobRecord {
+  const now = new Date().toISOString();
+  return {
+    id: `batch-${format}-${now}`,
+    site,
+    conversationId: 'batch',
+    title: `Batch export (${conversationCount} conversations)`,
+    format: 'zip',
+    status: 'queued',
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
 async function recordSuccess(conversation: ChatConversation, format: ExportFormat, filename: string): Promise<void> {
   await addHistoryRecord({ id: `${conversation.id}-${format}-${conversation.exportedAt}`, site: conversation.site, conversationId: conversation.id, title: conversation.title, format, createdAt: conversation.exportedAt, filename });
 }
@@ -173,8 +187,12 @@ async function exportSelectedConversationsFlow(sourceTabId: number, format: Expo
   await ensureTabsPermission();
   await ensureAccessToTab(sourceTabId);
   const successful: ChatConversation[] = [];
+  const successfulJobIds: string[] = [];
   let failedCount = 0;
   const sourceTab = await chrome.tabs.get(sourceTabId);
+  const batchJob = createBatchJobRecord(conversations[0]?.site ?? 'chatgpt', format, conversations.length);
+  await upsertJobRecord(batchJob);
+  await updateJobStatus(batchJob.id, 'running');
 
   for (const summary of conversations) {
     const job = createJobRecord({ id: summary.id, site: summary.site, title: summary.title, exportedAt: new Date().toISOString() }, format);
@@ -185,6 +203,7 @@ async function exportSelectedConversationsFlow(sourceTabId: number, format: Expo
         ? await requestCurrentConversation(sourceTabId)
         : await exportConversationFromUrl(summary.url);
       successful.push(conversation);
+      successfulJobIds.push(job.id);
       await updateJobStatus(job.id, 'completed');
     } catch (error) {
       failedCount += 1;
@@ -192,11 +211,23 @@ async function exportSelectedConversationsFlow(sourceTabId: number, format: Expo
     }
   }
 
-  if (successful.length === 0) throw new Error('All selected conversations failed to export.');
-  const artifact = await exportConversationBatch(successful, format);
-  await downloadArtifact(artifact);
-  await addHistoryRecord({ id: `batch-${format}-${Date.now()}`, site: successful[0].site, conversationId: 'batch', title: `Batch export (${successful.length} conversations)`, format: 'zip', createdAt: new Date().toISOString(), filename: artifact.filename });
-  return { archiveFilename: artifact.filename, exportedCount: successful.length, failedCount };
+  if (successful.length === 0) {
+    await updateJobStatus(batchJob.id, 'failed', 'All selected conversations failed to export.');
+    throw new Error('All selected conversations failed to export.');
+  }
+
+  try {
+    const artifact = await exportConversationBatch(successful, format);
+    await downloadArtifact(artifact);
+    await addHistoryRecord({ id: `batch-${format}-${Date.now()}`, site: successful[0].site, conversationId: 'batch', title: `Batch export (${successful.length} conversations)`, format: 'zip', createdAt: new Date().toISOString(), filename: artifact.filename });
+    await updateJobStatus(batchJob.id, 'completed');
+    return { archiveFilename: artifact.filename, exportedCount: successful.length, failedCount };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unexpected export error';
+    await updateJobStatus(batchJob.id, 'failed', errorMessage);
+    await Promise.all(successfulJobIds.map((jobId) => updateJobStatus(jobId, 'failed', `Archive download failed: ${errorMessage}`)));
+    throw error;
+  }
 }
 
 export async function handleRuntimeRequest(request: RuntimeRequest): Promise<RuntimeResponse> {

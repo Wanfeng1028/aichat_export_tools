@@ -13,22 +13,39 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-async function toDownloadUrl(artifact: ExportArtifact): Promise<string> {
+async function toDataUrl(artifact: ExportArtifact): Promise<string> {
   const buffer = await artifact.content.arrayBuffer();
   const base64 = arrayBufferToBase64(buffer);
   return `data:${artifact.mimeType};base64,${base64}`;
 }
 
-export async function downloadArtifact(artifact: ExportArtifact): Promise<void> {
-  const url = await toDownloadUrl(artifact);
-  const downloadId = await chrome.downloads.download({
-    url,
-    filename: artifact.filename,
-    conflictAction: 'uniquify',
-    saveAs: false
-  });
+async function toDownloadUrl(artifact: ExportArtifact): Promise<{ url: string; revoke?: () => void }> {
+  if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+    const objectUrl = URL.createObjectURL(artifact.content);
+    return {
+      url: objectUrl,
+      revoke: () => URL.revokeObjectURL(objectUrl)
+    };
+  }
 
-  if (!downloadId) {
-    throw new Error('The browser did not create a download task.');
+  return { url: await toDataUrl(artifact) };
+}
+
+export async function downloadArtifact(artifact: ExportArtifact): Promise<void> {
+  const { url, revoke } = await toDownloadUrl(artifact);
+
+  try {
+    const downloadId = await chrome.downloads.download({
+      url,
+      filename: artifact.filename,
+      conflictAction: 'uniquify',
+      saveAs: false
+    });
+
+    if (!downloadId) {
+      throw new Error('The browser did not create a download task.');
+    }
+  } finally {
+    revoke?.();
   }
 }

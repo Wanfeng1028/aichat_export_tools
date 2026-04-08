@@ -13,14 +13,15 @@ export class ChatGptAdapter extends BaseAdapter {
   async getStatus(): Promise<AdapterStatus> {
     const hasComposer = Boolean(document.querySelector(chatGptSelectors.composer));
     const hasConversation = Boolean(document.querySelector(chatGptSelectors.conversationTurns));
+    const hasMainContent = Boolean(document.querySelector(chatGptSelectors.main)?.textContent?.trim());
     const hasSidebar = Boolean(document.querySelector(chatGptSelectors.sidebarLinks));
 
     return {
       site: this.site,
       supported: globalThis.location.hostname.includes('chatgpt.com'),
-      loggedIn: hasComposer || hasConversation || hasSidebar,
-      canExportCurrentConversation: hasConversation,
-      message: hasConversation
+      loggedIn: hasComposer || hasConversation || hasSidebar || hasMainContent,
+      canExportCurrentConversation: hasConversation || hasMainContent,
+      message: hasConversation || hasMainContent
         ? 'Ready to export the current conversation.'
         : hasSidebar
           ? 'Conversation list detected. Open a conversation or use batch export from the dashboard.'
@@ -31,13 +32,13 @@ export class ChatGptAdapter extends BaseAdapter {
   async exportCurrentConversation(): Promise<ChatConversation> {
     let lastConversation: ChatConversation | null = null;
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
       const conversation = parseChatGptConversation();
       lastConversation = conversation;
       if (conversation.messages.length > 0) {
         return conversation;
       }
-      await delay(600);
+      await delay(500 + attempt * 200);
     }
 
     this.ensure(lastConversation && lastConversation.messages.length > 0, 'No conversation messages were found on the current page.');
@@ -46,8 +47,8 @@ export class ChatGptAdapter extends BaseAdapter {
 
   async scanConversationList(): Promise<ConversationSummary[]> {
     let conversations = scanChatGptConversationList();
-    for (let attempt = 0; attempt < 3 && conversations.length === 0; attempt += 1) {
-      await delay(500);
+    for (let attempt = 0; attempt < 5 && conversations.length === 0; attempt += 1) {
+      await delay(400 + attempt * 200);
       conversations = scanChatGptConversationList();
     }
     this.ensure(conversations.length > 0, 'No conversation links were found. Expand the ChatGPT sidebar and try again.');
