@@ -4,7 +4,6 @@ import type { RuntimeResponse } from '../../background/message-bus';
 import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestSitePermissionForUrl, requestTabsPermission } from '../../background/permissions';
 import { languageOptions, translate } from '../shared/i18n';
 import { useLanguage } from '../shared/hooks/useLanguage';
-import { getSettings } from '../../storage/settings';
 
 const exportFormats: Array<{ value: ExportFormat; label: string }> = [
   { value: 'markdown', label: 'Markdown' },
@@ -238,6 +237,9 @@ export function DashboardApp() {
       if (response.ok && 'batch' in response) {
         markStep(94, isZh ? '批量归档已生成，正在落盘...' : 'Batch archive generated. Saving file...');
         completeProgress(translate(language, 'batchReady', { filename: response.batch.archiveFilename, success: response.batch.exportedCount, failed: response.batch.failedCount }));
+        if (response.batch.savedAs) {
+          pushLog(translate(language, 'batchSavedAs', { path: response.batch.savedAs }), 'success');
+        }
         await refreshHistoryAndJobs();
       } else {
         failProgress(response.ok ? translate(language, 'unknownBatchResponse') : response.error);
@@ -251,6 +253,15 @@ export function DashboardApp() {
 
   function toggleConversation(id: string) {
     setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  async function handleOpenDownload(item: ExportHistoryRecord, mode: 'file' | 'folder') {
+    if (!item.downloadId) return;
+    if (mode === 'file') {
+      await chrome.downloads.open(item.downloadId);
+      return;
+    }
+    await chrome.downloads.show(item.downloadId);
   }
 
   function toggleSelectAll() {
@@ -411,11 +422,26 @@ export function DashboardApp() {
 
               <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
                 <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{translate(language, 'downloadedArchives')}</h2><span className="text-sm text-slate-500">{history.length}</span></div>
+                <p className="mt-2 text-xs text-slate-500">{translate(language, 'browserDownloadNote')}</p>
                 <div className="mt-4 space-y-3">
                   {history.length === 0 ? <div className="rounded-2xl bg-white px-4 py-5 text-sm text-slate-500">{translate(language, 'noExportsYet')}</div> : history.slice(0, 8).map((item) => (
                     <div key={item.id} className="rounded-2xl bg-white px-4 py-4">
                       <div className="truncate text-sm font-medium text-slate-900">{item.title}</div>
                       <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500"><span>{item.filename}</span><span>{new Date(item.createdAt).toLocaleString()}</span></div>
+                      <div className="mt-2 text-xs text-slate-500">
+                        <span className="font-medium text-slate-700">{translate(language, 'savedAs')}:</span>{' '}
+                        <span className="break-all">{item.savedAs ?? translate(language, 'unavailableDownloadPath')}</span>
+                      </div>
+                      {item.downloadId ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button type="button" onClick={() => void handleOpenDownload(item, 'file')} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100">
+                            {translate(language, 'openFile')}
+                          </button>
+                          <button type="button" onClick={() => void handleOpenDownload(item, 'folder')} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100">
+                            {translate(language, 'openFolder')}
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -427,4 +453,3 @@ export function DashboardApp() {
     </main>
   );
 }
-

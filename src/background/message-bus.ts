@@ -120,8 +120,23 @@ function createBatchJobRecord(site: ChatConversation['site'], format: ExportForm
   };
 }
 
-async function recordSuccess(conversation: ChatConversation, format: ExportFormat, filename: string): Promise<void> {
-  await addHistoryRecord({ id: `${conversation.id}-${format}-${conversation.exportedAt}`, site: conversation.site, conversationId: conversation.id, title: conversation.title, format, createdAt: conversation.exportedAt, filename });
+async function recordSuccess(
+  conversation: ChatConversation,
+  format: ExportFormat,
+  filename: string,
+  downloadMeta?: { downloadId: number; savedAs?: string }
+): Promise<void> {
+  await addHistoryRecord({
+    id: `${conversation.id}-${format}-${conversation.exportedAt}`,
+    site: conversation.site,
+    conversationId: conversation.id,
+    title: conversation.title,
+    format,
+    createdAt: conversation.exportedAt,
+    filename,
+    downloadId: downloadMeta?.downloadId,
+    savedAs: downloadMeta?.savedAs
+  });
 }
 
 async function waitForTabComplete(tabId: number): Promise<void> {
@@ -174,8 +189,8 @@ async function exportCurrentConversationFlow(format: ExportFormat, sourceTabId?:
   await updateJobStatus(job.id, 'running');
   try {
     const artifact = await exportConversation(conversation, format);
-    await downloadArtifact(artifact);
-    await recordSuccess(conversation, format, artifact.filename);
+    const download = await downloadArtifact(artifact);
+    await recordSuccess(conversation, format, artifact.filename, download);
     await updateJobStatus(job.id, 'completed');
     return conversation;
   } catch (error) {
@@ -219,10 +234,20 @@ async function exportSelectedConversationsFlow(sourceTabId: number, format: Expo
 
   try {
     const artifact = await exportConversationBatch(successful, format);
-    await downloadArtifact(artifact);
-    await addHistoryRecord({ id: `batch-${format}-${Date.now()}`, site: successful[0].site, conversationId: 'batch', title: `Batch export (${successful.length} conversations)`, format: 'zip', createdAt: new Date().toISOString(), filename: artifact.filename });
+    const download = await downloadArtifact(artifact);
+    await addHistoryRecord({
+      id: `batch-${format}-${Date.now()}`,
+      site: successful[0].site,
+      conversationId: 'batch',
+      title: `Batch export (${successful.length} conversations)`,
+      format: 'zip',
+      createdAt: new Date().toISOString(),
+      filename: artifact.filename,
+      downloadId: download.downloadId,
+      savedAs: download.savedAs
+    });
     await updateJobStatus(batchJob.id, 'completed');
-    return { archiveFilename: artifact.filename, exportedCount: successful.length, failedCount };
+    return { archiveFilename: artifact.filename, exportedCount: successful.length, failedCount, savedAs: download.savedAs };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unexpected export error';
     await updateJobStatus(batchJob.id, 'failed', errorMessage);
@@ -255,4 +280,5 @@ export async function handleRuntimeRequest(request: RuntimeRequest): Promise<Run
     return { ok: false, error: error instanceof Error ? error.message : 'Unexpected runtime error.' };
   }
 }
+
 

@@ -52,6 +52,8 @@ export interface ExportHistoryRecord {
   format: ExportFormat;
   createdAt: string;
   filename: string;
+  downloadId?: number;
+  savedAs?: string;
 }
 
 export interface ExportJobRecord {
@@ -70,6 +72,7 @@ export interface BatchExportResult {
   archiveFilename: string;
   exportedCount: number;
   failedCount: number;
+  savedAs?: string;
 }
 
 export interface AdapterStatus {

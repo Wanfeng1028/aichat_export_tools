@@ -1,5 +1,10 @@
 import type { ExportArtifact } from '../core/types';
 
+export interface DownloadResult {
+  downloadId: number;
+  savedAs?: string;
+}
+
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   const chunkSize = 0x8000;
@@ -31,7 +36,12 @@ async function toDownloadUrl(artifact: ExportArtifact): Promise<{ url: string; r
   return { url: await toDataUrl(artifact) };
 }
 
-export async function downloadArtifact(artifact: ExportArtifact): Promise<void> {
+async function resolveSavedFilename(downloadId: number): Promise<string | undefined> {
+  const [item] = await chrome.downloads.search({ id: downloadId });
+  return item?.filename;
+}
+
+export async function downloadArtifact(artifact: ExportArtifact): Promise<DownloadResult> {
   const { url, revoke } = await toDownloadUrl(artifact);
 
   try {
@@ -45,6 +55,11 @@ export async function downloadArtifact(artifact: ExportArtifact): Promise<void> 
     if (!downloadId) {
       throw new Error('The browser did not create a download task.');
     }
+
+    return {
+      downloadId,
+      savedAs: await resolveSavedFilename(downloadId)
+    };
   } finally {
     revoke?.();
   }

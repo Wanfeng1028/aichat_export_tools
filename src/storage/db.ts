@@ -12,6 +12,11 @@ export class AIChatExporterDB extends Dexie {
       exportHistory: '&id, createdAt, site, conversationId, format',
       exportJobs: '&id, createdAt, updatedAt, site, conversationId, format, status'
     });
+
+    this.version(2).stores({
+      exportHistory: '&id, createdAt, site, conversationId, format, downloadId',
+      exportJobs: '&id, createdAt, updatedAt, site, conversationId, format, status'
+    });
   }
 }
 
