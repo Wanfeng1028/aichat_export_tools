@@ -1,6 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import type { ChatConversation, ExportArtifact } from '../core/types';
-import { buildConversationFilename } from '../core/filename';
+import { buildConversationFilenameFromSettings } from '../core/filename';
 import { buildConversationSections, buildConversationSummary } from './shared';
 
 function wrapText(text: string, maxChars: number): string[] {
@@ -85,8 +85,9 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
   const content = new Blob([await pdf.save()], { type: 'application/pdf' });
 
   return {
-    filename: buildConversationFilename(conversation, 'pdf'),
+    filename: await buildConversationFilenameFromSettings(conversation, 'pdf'),
     mimeType: 'application/pdf',
     content
   };
 }
+

@@ -4,6 +4,7 @@ import type { RuntimeResponse } from '../../background/message-bus';
 import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestSitePermissionForUrl, requestTabsPermission } from '../../background/permissions';
 import { languageOptions, translate } from '../shared/i18n';
 import { useLanguage } from '../shared/hooks/useLanguage';
+import { getSettings } from '../../storage/settings';
 
 const exportFormats: Array<{ value: ExportFormat; label: string }> = [
   { value: 'markdown', label: 'Markdown' },
@@ -426,3 +427,4 @@ export function DashboardApp() {
     </main>
   );
 }
+

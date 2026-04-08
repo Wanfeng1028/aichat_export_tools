@@ -4,6 +4,7 @@ import type { RuntimeResponse } from '../../background/message-bus';
 import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestSitePermissionForUrl, requestTabsPermission } from '../../background/permissions';
 import { languageOptions, translate } from '../shared/i18n';
 import { useLanguage } from '../shared/hooks/useLanguage';
+import { getSettings } from '../../storage/settings';
 
 const exportFormats: Array<{ value: ExportFormat; label: string; hintKey: 'markdownHint' | 'pdfHint' | 'docxHint' | 'zipHint' }> = [
   { value: 'markdown', label: 'Markdown', hintKey: 'markdownHint' },
@@ -124,6 +125,13 @@ export function PopupApp() {
     setStatusText(translate(language, 'scanningCurrentTab'));
     void refreshPageContext();
   }, [language, ready]);
+
+  useEffect(() => {
+    void (async () => {
+      const settings = await getSettings();
+      setFormat(settings.preferredFormat);
+    })();
+  }, []);
 
   const conversationCountLabel = useMemo(() => {
     if (conversations.length === 0) return translate(language, 'noScanYet');
@@ -367,4 +375,5 @@ export function PopupApp() {
     </main>
   );
 }
+
 

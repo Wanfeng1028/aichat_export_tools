@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildConversationFilename } from '../../src/core/filename';
+import { applyFilenameTemplate, buildConversationFilename } from '../../src/core/filename';
 import type { ChatConversation } from '../../src/core/types';
 
 const baseConversation: ChatConversation = {
@@ -15,6 +15,12 @@ describe('buildConversationFilename', () => {
   it('sanitizes reserved characters and preserves timestamp ordering', () => {
     expect(buildConversationFilename(baseConversation, 'md')).toBe(
       'chatgpt__Plan- ship - export -alpha-__2026-04-09T01-02-03.000Z.md'
+    );
+  });
+
+  it('applies custom filename templates', () => {
+    expect(applyFilenameTemplate(baseConversation, '{date}__{site}__{title}__{id}')).toBe(
+      '2026-04-09__chatgpt__Plan- ship - export -alpha-__conv-1'
     );
   });
 });

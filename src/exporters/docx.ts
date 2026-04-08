@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import type { ChatConversation, ExportArtifact } from '../core/types';
-import { buildConversationFilename } from '../core/filename';
+import { buildConversationFilenameFromSettings } from '../core/filename';
 import { buildConversationSections, buildConversationSummary } from './shared';
 
 function escapeXml(value: string): string {
@@ -90,8 +90,9 @@ export async function exportConversationToDocx(conversation: ChatConversation): 
   const content = await zip.generateAsync({ type: 'blob' });
 
   return {
-    filename: buildConversationFilename(conversation, 'docx'),
+    filename: await buildConversationFilenameFromSettings(conversation, 'docx'),
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     content
   };
 }
+

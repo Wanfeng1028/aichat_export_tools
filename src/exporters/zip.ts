@@ -1,6 +1,6 @@
 import type { ChatConversation } from '../core/types';
 import JSZip from 'jszip';
-import { buildConversationFilename } from '../core/filename';
+import { buildConversationFilenameFromSettings } from '../core/filename';
 import { exportConversationToMarkdown } from './markdown';
 import { exportConversationToPdf } from './pdf';
 import { exportConversationToDocx } from './docx';
@@ -28,8 +28,9 @@ export async function exportConversationToZip(conversation: ChatConversation) {
   const content = await zip.generateAsync({ type: 'blob' });
 
   return {
-    filename: buildConversationFilename(conversation, 'zip'),
+    filename: await buildConversationFilenameFromSettings(conversation, 'zip'),
     mimeType: 'application/zip',
     content
   };
 }
+

@@ -1,5 +1,5 @@
 import type { ChatConversation, ExportArtifact } from '../core/types';
-import { buildConversationFilename } from '../core/filename';
+import { buildConversationFilenameFromSettings } from '../core/filename';
 
 function decodeHtml(html: string): string {
   return html
@@ -60,8 +60,9 @@ export async function exportConversationToMarkdown(conversation: ChatConversatio
   const content = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
 
   return {
-    filename: buildConversationFilename(conversation, 'md'),
+    filename: await buildConversationFilenameFromSettings(conversation, 'md'),
     mimeType: 'text/markdown;charset=utf-8',
     content
   };
 }
+
