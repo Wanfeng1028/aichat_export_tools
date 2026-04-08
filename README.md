@@ -4,26 +4,21 @@ Export chats from major AI websites to Markdown, PDF, DOCX, and ZIP locally.
 
 ## Overview
 
-AI Chat Exporter is an open-source, local-first browser extension for exporting chat records from major AI websites. The current implementation focuses on a usable ChatGPT export workflow with local history and job tracking.
+AI Chat Exporter is an open-source, local-first browser extension for exporting chat records from major AI websites. The current build is centered on a practical ChatGPT workflow with current-conversation export, sidebar scanning, batch export, job tracking, and a polished dashboard.
 
 ## Current Status
 
 Implemented in this repository:
 
-- Manifest V3 extension skeleton
-- React + TypeScript + Tailwind setup
+- Manifest V3 browser extension scaffold
+- React + TypeScript + Tailwind UI
 - Popup, Dashboard, and Options pages
-- Core data model and background message bus
-- ChatGPT MVP adapter for current-page export
-- Markdown, PDF, DOCX, and ZIP bundle export pipeline
-- Local download via the browser downloads API
+- ChatGPT current-conversation extraction
+- ChatGPT sidebar conversation scanning
+- Markdown, PDF, DOCX, and ZIP bundle exporters
+- Batch export that packs selected conversations into one archive
 - IndexedDB-backed export history and job records
-
-Planned next:
-
-- Conversation list scanning and true multi-conversation batch export
-- History filtering and retry actions
-- More site adapters
+- Dynamic exporter loading to keep the main service worker lean
 
 ## Development
 
@@ -32,7 +27,7 @@ npm install
 npm run build
 ```
 
-Then load the `dist` directory as an unpacked extension in Chrome/Edge.
+Load the `dist` directory as an unpacked extension in Chrome or Edge.
 
 ## Privacy
 

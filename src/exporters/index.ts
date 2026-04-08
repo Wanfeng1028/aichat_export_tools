@@ -23,3 +23,8 @@ export async function exportConversation(conversation: ChatConversation, format:
 
   throw new Error(`Unsupported export format: ${format}`);
 }
+
+export async function exportConversationBatch(conversations: ChatConversation[], format: ExportFormat): Promise<ExportArtifact> {
+  const module = await import('./batch');
+  return module.exportConversationBatch(conversations, format);
+}

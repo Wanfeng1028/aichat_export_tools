@@ -29,6 +29,15 @@ export interface ChatConversation {
   messages: ChatMessage[];
 }
 
+export interface ConversationSummary {
+  id: string;
+  site: SupportedSite;
+  title: string;
+  url: string;
+  updatedAt?: string;
+  isActive?: boolean;
+}
+
 export interface ExportArtifact {
   filename: string;
   mimeType: string;
@@ -55,6 +64,12 @@ export interface ExportJobRecord {
   createdAt: string;
   updatedAt: string;
   error?: string;
+}
+
+export interface BatchExportResult {
+  archiveFilename: string;
+  exportedCount: number;
+  failedCount: number;
 }
 
 export interface AdapterStatus {

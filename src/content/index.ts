@@ -39,6 +39,14 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     return true;
   }
 
+  if (request.type === 'CONTENT_SCAN_CONVERSATIONS') {
+    void adapter.scanConversationList().then(sendResponse).catch((error: unknown) => {
+      logger.error(error);
+      sendResponse(undefined);
+    });
+    return true;
+  }
+
   if (request.type === 'CONTENT_EXPORT_CURRENT_CONVERSATION') {
     void adapter.exportCurrentConversation().then(sendResponse).catch((error: unknown) => {
       logger.error(error);

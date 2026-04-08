@@ -20,5 +20,5 @@ export async function updateJobStatus(id: string, status: JobStatus, error?: str
 }
 
 export async function listJobRecords(): Promise<ExportJobRecord[]> {
-  return db.exportJobs.orderBy('createdAt').reverse().limit(20).toArray();
+  return db.exportJobs.orderBy('createdAt').reverse().limit(50).toArray();
 }
