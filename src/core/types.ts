@@ -1,4 +1,4 @@
-export type SupportedSite = 'chatgpt' | 'claude' | 'gemini' | 'kimi' | 'deepseek' | 'grok';
+export type SupportedSite = 'chatgpt' | 'claude' | 'gemini' | 'kimi' | 'deepseek' | 'grok' | 'doubao' | 'qianwen' | 'yiyan';
 export type ExportFormat = 'markdown' | 'pdf' | 'docx' | 'zip';
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed';

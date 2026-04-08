@@ -1,25 +1,39 @@
-import TurndownService from 'turndown';
-import { gfm } from 'turndown-plugin-gfm';
 import type { ChatConversation, ExportArtifact } from '../core/types';
 import { buildConversationFilename } from '../core/filename';
 
-const turndownService = new TurndownService({
-  headingStyle: 'atx',
-  codeBlockStyle: 'fenced',
-  bulletListMarker: '-',
-  emDelimiter: '_'
-});
+function decodeHtml(html: string): string {
+  return html
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
 
-turndownService.use(gfm);
-
-turndownService.addRule('preserveLineBreaks', {
-  filter: ['br'],
-  replacement: () => '  \n'
-});
+function htmlToMarkdown(html: string): string {
+  return decodeHtml(
+    html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|section|article|h1|h2|h3|h4|h5|h6)>/gi, '\n\n')
+      .replace(/<(strong|b)>(.*?)<\/(strong|b)>/gi, '**$2**')
+      .replace(/<(em|i)>(.*?)<\/(em|i)>/gi, '_$2_')
+      .replace(/<code>(.*?)<\/code>/gi, '`$1`')
+      .replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_match, code) => `\n\n\0\n${decodeHtml(code)}\n\1\n\n`)
+      .replace(/<li>(.*?)<\/li>/gi, '- $1\n')
+      .replace(/<blockquote>(.*?)<\/blockquote>/gi, (_match, text) => `\n> ${text}\n`)
+      .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi, '[$2]($1)')
+      .replace(/<[^>]+>/g, '')
+  )
+    .replace(/\u00060/g, '```')
+    .replace(/\u00061/g, '```')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 function toMarkdown(message: ChatConversation['messages'][number]): string {
   if (message.html) {
-    return turndownService.turndown(message.html).trim();
+    return htmlToMarkdown(message.html);
   }
 
   return message.text.trim();

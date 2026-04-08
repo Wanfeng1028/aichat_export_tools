@@ -1,30 +1,30 @@
 import type { ExportFormat, ExportArtifact, ChatConversation } from '../core/types';
+import { exportConversationToMarkdown } from './markdown';
+import { exportConversationToPdf } from './pdf';
+import { exportConversationToDocx } from './docx';
+import { exportConversationToZip } from './zip';
+import { exportConversationBatch as exportConversationBatchImpl } from './batch';
 
 export async function exportConversation(conversation: ChatConversation, format: ExportFormat): Promise<ExportArtifact> {
   if (format === 'markdown') {
-    const module = await import('./markdown');
-    return module.exportConversationToMarkdown(conversation);
+    return exportConversationToMarkdown(conversation);
   }
 
   if (format === 'pdf') {
-    const module = await import('./pdf');
-    return module.exportConversationToPdf(conversation);
+    return exportConversationToPdf(conversation);
   }
 
   if (format === 'docx') {
-    const module = await import('./docx');
-    return module.exportConversationToDocx(conversation);
+    return exportConversationToDocx(conversation);
   }
 
   if (format === 'zip') {
-    const module = await import('./zip');
-    return module.exportConversationToZip(conversation);
+    return exportConversationToZip(conversation);
   }
 
   throw new Error(`Unsupported export format: ${format}`);
 }
 
 export async function exportConversationBatch(conversations: ChatConversation[], format: ExportFormat): Promise<ExportArtifact> {
-  const module = await import('./batch');
-  return module.exportConversationBatch(conversations, format);
+  return exportConversationBatchImpl(conversations, format);
 }

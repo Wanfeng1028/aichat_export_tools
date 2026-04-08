@@ -4,11 +4,16 @@ export async function downloadArtifact(artifact: ExportArtifact): Promise<void> 
   const url = URL.createObjectURL(artifact.content);
 
   try {
-    await chrome.downloads.download({
+    const downloadId = await chrome.downloads.download({
       url,
       filename: artifact.filename,
-      saveAs: true
+      conflictAction: 'uniquify',
+      saveAs: false
     });
+
+    if (!downloadId) {
+      throw new Error('The browser did not create a download task.');
+    }
   } finally {
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }

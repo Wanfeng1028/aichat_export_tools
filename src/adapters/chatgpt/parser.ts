@@ -10,10 +10,56 @@ function normalizeRole(role: string | null): MessageRole {
   return 'user';
 }
 
+function inferRole(node: Element, index: number): MessageRole {
+  const directRole = node.getAttribute('data-message-author-role');
+  if (directRole) {
+    return normalizeRole(directRole);
+  }
+
+  const nestedRoleNode = node.querySelector('[data-message-author-role]');
+  if (nestedRoleNode) {
+    return normalizeRole(nestedRoleNode.getAttribute('data-message-author-role'));
+  }
+
+  const dataTestId = (node.getAttribute('data-testid') ?? '').toLowerCase();
+  if (dataTestId.includes('assistant')) return 'assistant';
+  if (dataTestId.includes('user')) return 'user';
+
+  const ariaLabel = sanitizePlainText(node.getAttribute('aria-label') ?? '').toLowerCase();
+  if (ariaLabel.includes('assistant') || ariaLabel.includes('chatgpt')) return 'assistant';
+  if (ariaLabel.includes('user') || ariaLabel.includes('you')) return 'user';
+
+  const avatarAlt = sanitizePlainText(node.querySelector('img')?.getAttribute('alt') ?? '').toLowerCase();
+  if (avatarAlt.includes('assistant') || avatarAlt.includes('chatgpt')) return 'assistant';
+  if (avatarAlt.includes('user') || avatarAlt.includes('you')) return 'user';
+
+  return index % 2 === 0 ? 'user' : 'assistant';
+}
+
+function extractMessageContent(node: Element): { text: string; html: string } {
+  const candidates = [
+    node.querySelector('[data-message-author-role]'),
+    node.querySelector('[data-testid="conversation-turn-content"]'),
+    node.querySelector('[data-testid*="conversation-turn-content"]'),
+    node.querySelector('.markdown'),
+    node.querySelector('[class*="markdown"]'),
+    node
+  ].filter(Boolean) as Element[];
+
+  for (const candidate of candidates) {
+    const text = sanitizePlainText(candidate.textContent ?? '');
+    const html = candidate.innerHTML;
+    if (text || html) {
+      return { text, html };
+    }
+  }
+
+  return { text: '', html: '' };
+}
+
 function buildMessage(node: Element, index: number): ChatMessage {
-  const role = normalizeRole(node.getAttribute('data-message-author-role'));
-  const html = node.innerHTML;
-  const text = sanitizePlainText(node.textContent ?? '');
+  const role = inferRole(node, index);
+  const { text, html } = extractMessageContent(node);
 
   return {
     id: `msg-${index + 1}`,
@@ -41,7 +87,7 @@ export function scanChatGptConversationList(documentRef: Document = document): C
     const url = normalizeConversationUrl(anchor.href);
     const id = url.split('/').filter(Boolean).pop() ?? url;
 
-    if (!id || seen.has(id)) {
+    if (!id || seen.has(id) || !url.includes('/c/')) {
       continue;
     }
 
@@ -73,8 +119,9 @@ export function parseChatGptConversation(documentRef: Document = document): Chat
     sanitizePlainText(documentRef.title.replace(/\s*[-|].*$/, '')) ||
     'ChatGPT Conversation';
 
-  const messageNodes = Array.from(documentRef.querySelectorAll(chatGptSelectors.conversationTurns));
-  const messages = messageNodes.map(buildMessage).filter((message) => message.text.length > 0 || Boolean(message.html));
+  const rawNodes = Array.from(documentRef.querySelectorAll(chatGptSelectors.conversationTurns));
+  const uniqueNodes = rawNodes.filter((node, index) => rawNodes.findIndex((candidate) => candidate === node || candidate.contains(node)) === index);
+  const messages = uniqueNodes.map(buildMessage).filter((message) => message.text.length > 0 || Boolean(message.html));
 
   return {
     id: currentId,

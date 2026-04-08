@@ -4,9 +4,14 @@ export const manifest = {
   short_name: 'AI Exporter',
   version: '0.1.0',
   description: 'Export chats from major AI websites to Markdown locally.',
+  icons: {
+    '16': 'icons/icon-16.png',
+    '32': 'icons/icon-32.png',
+    '48': 'icons/icon-48.png',
+    '128': 'icons/icon-128.png'
+  },
   action: {
-    default_title: 'AI Chat Exporter',
-    default_popup: 'src/ui/popup/index.html'
+    default_title: 'AI Chat Exporter'
   },
   background: {
     service_worker: 'src/background/service-worker.js',
@@ -21,7 +26,13 @@ export const manifest = {
     'https://kimi.moonshot.cn/*',
     'https://chat.deepseek.com/*',
     'https://grok.com/*',
-    'https://x.com/i/grok*'
+    'https://x.com/i/grok*',
+    'https://www.doubao.com/*',
+    'https://doubao.com/*',
+    'https://tongyi.aliyun.com/*',
+    'https://qianwen.aliyun.com/*',
+    'https://yiyan.baidu.com/*',
+    'https://wenxin.baidu.com/*'
   ],
   host_permissions: [],
   content_scripts: [
