@@ -1,6 +1,6 @@
 import { BaseAdapter } from '../shared/base';
 import type { AdapterStatus, ChatConversation, ConversationSummary } from '../../core/types';
-import { parseChatGptConversation, scanChatGptConversationList } from './parser';
+import { isChatGptConversationPath, parseChatGptConversation, scanChatGptConversationList } from './parser';
 import { chatGptSelectors } from './selectors';
 
 function delay(ms: number): Promise<void> {
@@ -15,21 +15,24 @@ export class ChatGptAdapter extends BaseAdapter {
     const hasConversation = Boolean(document.querySelector(chatGptSelectors.conversationTurns));
     const hasMainContent = Boolean(document.querySelector(chatGptSelectors.main)?.textContent?.trim());
     const hasSidebar = Boolean(document.querySelector(chatGptSelectors.sidebarLinks));
+    const isConversationPage = isChatGptConversationPath();
 
     return {
       site: this.site,
       supported: globalThis.location.hostname.includes('chatgpt.com'),
       loggedIn: hasComposer || hasConversation || hasSidebar || hasMainContent,
-      canExportCurrentConversation: hasConversation || hasMainContent,
-      message: hasConversation || hasMainContent
+      canExportCurrentConversation: isConversationPage && (hasConversation || hasMainContent),
+      message: isConversationPage
         ? 'Ready to export the current conversation.'
         : hasSidebar
           ? 'Conversation list detected. Open a conversation or use batch export from the dashboard.'
-          : 'Open ChatGPT and load your conversation list first.'
+          : 'Open a ChatGPT conversation page first.'
     };
   }
 
   async exportCurrentConversation(): Promise<ChatConversation> {
+    this.ensure(isChatGptConversationPath(), 'The current page is not a ChatGPT conversation page. Open a /c/... conversation first.');
+
     let lastConversation: ChatConversation | null = null;
 
     for (let attempt = 0; attempt < 8; attempt += 1) {

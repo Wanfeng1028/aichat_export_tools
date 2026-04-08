@@ -16,6 +16,7 @@ import { hasSitePermissionForUrl, hasTabsPermission } from './permissions';
 export type RuntimeRequest =
   | { type: 'GET_ACTIVE_SITE_STATUS'; sourceTabId?: number }
   | { type: 'SCAN_CONVERSATIONS'; sourceTabId: number }
+  | { type: 'PREVIEW_CURRENT_CONVERSATION'; sourceTabId?: number }
   | { type: 'EXPORT_CURRENT_CONVERSATION'; format: ExportFormat; sourceTabId?: number }
   | { type: 'EXPORT_SELECTED_CONVERSATIONS'; sourceTabId: number; format: ExportFormat; conversations: ConversationSummary[] }
   | { type: 'LIST_EXPORT_HISTORY' }
@@ -234,6 +235,7 @@ export async function handleRuntimeRequest(request: RuntimeRequest): Promise<Run
   try {
     if (request.type === 'GET_ACTIVE_SITE_STATUS') return { ok: true, status: await requestContentStatus(request.sourceTabId) };
     if (request.type === 'SCAN_CONVERSATIONS') return { ok: true, conversations: await requestConversationScan(request.sourceTabId) };
+    if (request.type === 'PREVIEW_CURRENT_CONVERSATION') return { ok: true, conversation: await requestCurrentConversation(request.sourceTabId) };
     if (request.type === 'EXPORT_CURRENT_CONVERSATION') return { ok: true, conversation: await exportCurrentConversationFlow(request.format, request.sourceTabId) };
     if (request.type === 'EXPORT_SELECTED_CONVERSATIONS') return { ok: true, batch: await exportSelectedConversationsFlow(request.sourceTabId, request.format, request.conversations) };
     if (request.type === 'LIST_EXPORT_HISTORY') return { ok: true, history: await listHistoryRecords() };
@@ -253,3 +255,4 @@ export async function handleRuntimeRequest(request: RuntimeRequest): Promise<Run
     return { ok: false, error: error instanceof Error ? error.message : 'Unexpected runtime error.' };
   }
 }
+

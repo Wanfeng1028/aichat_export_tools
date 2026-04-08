@@ -14,6 +14,10 @@ function normalizeHtml(html: string): string {
   return html.replace(/\u0000/g, '').trim();
 }
 
+function isChatGptConversationPath(pathname: string = globalThis.location.pathname): boolean {
+  return /^\/c\/[^/]+/.test(pathname);
+}
+
 function inferRole(node: Element, index: number): MessageRole {
   const directRole = node.getAttribute('data-message-author-role');
   if (directRole) {
@@ -25,7 +29,7 @@ function inferRole(node: Element, index: number): MessageRole {
     return normalizeRole(nestedRoleNode.getAttribute('data-message-author-role'));
   }
 
-  const dataTestId = `${node.getAttribute('data-testid') ?? ''} ${node.className ?? ''}`.toLowerCase();
+  const dataTestId = `${node.getAttribute('data-testid') ?? ''} ${String(node.className ?? '')}`.toLowerCase();
   if (dataTestId.includes('assistant')) return 'assistant';
   if (dataTestId.includes('user')) return 'user';
 
@@ -44,10 +48,10 @@ function extractMessageContent(node: Element): { text: string; html: string } {
   const candidates = [
     node.querySelector('[data-testid="conversation-turn-content"]'),
     node.querySelector('[data-testid*="conversation-turn-content"]'),
+    node.querySelector('[data-testid*="message-content"]'),
     node.querySelector('[data-message-author-role]'),
     node.querySelector('[class*="markdown"]'),
     node.querySelector('.markdown'),
-    node.querySelector('[data-testid*="message-content"]'),
     node.querySelector('article'),
     node
   ].filter(Boolean) as Element[];
@@ -84,26 +88,35 @@ function normalizeConversationUrl(href: string): string {
   }
 }
 
-function uniqueTopLevelNodes(nodes: Element[], main: Element | null): Element[] {
-  const filtered = main ? nodes.filter((node) => main.contains(node)) : nodes;
-  return filtered.filter((node, index) => !filtered.some((candidate, candidateIndex) => candidateIndex !== index && candidate.contains(node)));
+function selectLeafNodes(nodes: Element[], main: Element | null): Element[] {
+  const inMain = main ? nodes.filter((node) => main.contains(node)) : nodes;
+  return inMain.filter((node, index) => !inMain.some((candidate, candidateIndex) => candidateIndex !== index && node.contains(candidate)));
+}
+
+function hasMeaningfulMessageContent(node: Element): boolean {
+  const text = sanitizePlainText(node.textContent ?? '');
+  if (text.length >= 8) {
+    return true;
+  }
+
+  return Boolean(node.querySelector('[class*="markdown"], .markdown, code, pre, p, li'));
 }
 
 function extractStructuredMessages(documentRef: Document): ChatMessage[] {
   const main = documentRef.querySelector(chatGptSelectors.main);
   const rawNodes = Array.from(documentRef.querySelectorAll(chatGptSelectors.conversationTurns));
-  const uniqueNodes = uniqueTopLevelNodes(rawNodes, main);
-  return uniqueNodes.map(buildMessage).filter((message) => message.text.length > 0 || Boolean(message.html));
+  const candidateNodes = selectLeafNodes(rawNodes, main).filter(hasMeaningfulMessageContent);
+  return candidateNodes.map(buildMessage).filter((message) => message.text.length > 0 || Boolean(message.html));
 }
 
 function createSnapshotMessage(documentRef: Document): ChatMessage[] {
-  const main = documentRef.querySelector(chatGptSelectors.main);
-  if (!main) {
+  const root = documentRef.querySelector(chatGptSelectors.main) ?? documentRef.body;
+  if (!root) {
     return [];
   }
 
-  const clone = main.cloneNode(true) as HTMLElement;
-  for (const selector of ['nav', 'aside', 'form', 'textarea', 'button', '[role="dialog"]', '[aria-live]', '[data-testid*="composer"]']) {
+  const clone = root.cloneNode(true) as HTMLElement;
+  for (const selector of ['nav', 'aside', 'form', 'textarea', 'button', 'header', 'footer', 'script', 'style', '[role="dialog"]', '[aria-live]', '[data-testid*="composer"]']) {
     clone.querySelectorAll(selector).forEach((node) => node.remove());
   }
 
@@ -122,6 +135,30 @@ function createSnapshotMessage(documentRef: Document): ChatMessage[] {
       attachments: []
     }
   ];
+}
+
+function buildCurrentConversationSummary(documentRef: Document): ConversationSummary | null {
+  if (!isChatGptConversationPath()) {
+    return null;
+  }
+
+  const id = globalThis.location.pathname.split('/').filter(Boolean).pop() ?? '';
+  if (!id) {
+    return null;
+  }
+
+  const title =
+    sanitizePlainText(documentRef.querySelector(chatGptSelectors.title)?.textContent ?? '') ||
+    sanitizePlainText(documentRef.title.replace(/\s*[-|].*$/, '')) ||
+    'ChatGPT Conversation';
+
+  return {
+    id,
+    site: 'chatgpt',
+    title,
+    url: globalThis.location.href,
+    isActive: true
+  };
 }
 
 export function scanChatGptConversationList(documentRef: Document = document): ConversationSummary[] {
@@ -152,6 +189,11 @@ export function scanChatGptConversationList(documentRef: Document = document): C
     });
   }
 
+  const currentConversation = buildCurrentConversationSummary(documentRef);
+  if (currentConversation && !seen.has(currentConversation.id)) {
+    items.unshift(currentConversation);
+  }
+
   return items;
 }
 
@@ -177,3 +219,5 @@ export function parseChatGptConversation(documentRef: Document = document): Chat
     messages
   };
 }
+
+export { isChatGptConversationPath };

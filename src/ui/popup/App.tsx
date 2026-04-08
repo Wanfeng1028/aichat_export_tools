@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ConversationSummary, ExportFormat, SupportedSite } from '../../core/types';
+import type { ChatConversation, ConversationSummary, ExportFormat, SupportedSite } from '../../core/types';
 import type { RuntimeResponse } from '../../background/message-bus';
 import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestSitePermissionForUrl, requestTabsPermission } from '../../background/permissions';
 import { languageOptions, translate } from '../shared/i18n';
@@ -31,12 +31,14 @@ type PopupLogItem = {
   level: 'info' | 'success' | 'error';
 };
 
-function getPresetSourceTabId(): number | null {
+function getPopupParams(): { sourceTabId: number | null; embedded: boolean } {
   const params = new URLSearchParams(globalThis.location.search);
   const value = params.get('sourceTabId');
-  if (!value) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  const parsed = value ? Number(value) : NaN;
+  return {
+    sourceTabId: Number.isFinite(parsed) ? parsed : null,
+    embedded: params.get('embedded') === '1'
+  };
 }
 
 async function callRuntime(message: { type: string; format?: ExportFormat; sourceTabId?: number; conversations?: ConversationSummary[] }): Promise<RuntimeResponse> {
@@ -46,7 +48,8 @@ async function callRuntime(message: { type: string; format?: ExportFormat; sourc
 export function PopupApp() {
   const { language, setLanguage, ready } = useLanguage();
   const isZh = language === 'zh-CN';
-  const [sourceTabId, setSourceTabId] = useState<number | null>(() => getPresetSourceTabId());
+  const popupParams = getPopupParams();
+  const [sourceTabId, setSourceTabId] = useState<number | null>(popupParams.sourceTabId);
   const [activeSite, setActiveSite] = useState<SupportedSite>('chatgpt');
   const [busy, setBusy] = useState(false);
   const [statusText, setStatusText] = useState('');
@@ -55,9 +58,10 @@ export function PopupApp() {
   const [progress, setProgress] = useState(0);
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [logs, setLogs] = useState<PopupLogItem[]>([]);
+  const [_previewConversation, setPreviewConversation] = useState<ChatConversation | null>(null);
 
   function pushLog(text: string, level: PopupLogItem['level'] = 'info') {
-    setLogs((current) => [{ id: `${Date.now()}-${current.length}`, text, level }, ...current].slice(0, 10));
+    setLogs((current) => [{ id: `${Date.now()}-${current.length}`, text, level }, ...current].slice(0, 12));
   }
 
   function startProgress(initialText: string) {
@@ -85,11 +89,11 @@ export function PopupApp() {
   }
 
   async function resolveSourceTab(): Promise<number | null> {
-    const preset = getPresetSourceTabId();
-    if (preset) {
-      setSourceTabId(preset);
-      return preset;
+    if (popupParams.sourceTabId) {
+      setSourceTabId(popupParams.sourceTabId);
+      return popupParams.sourceTabId;
     }
+
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     const tabId = tab?.id ?? null;
     setSourceTabId(tabId);
@@ -203,6 +207,7 @@ export function PopupApp() {
       markStep(52, isZh ? '正在抓取当前会话内容...' : 'Capturing current conversation...');
       const response = await callRuntime({ type: 'EXPORT_CURRENT_CONVERSATION', format, sourceTabId });
       if (response.ok && 'conversation' in response) {
+        setPreviewConversation(response.conversation);
         markStep(90, isZh ? '导出内容已生成，正在落盘...' : 'Export artifact generated. Saving file...');
         completeProgress(translate(language, 'exportedConversation', { title: response.conversation.title }));
       } else {
@@ -271,14 +276,16 @@ export function PopupApp() {
   }
 
   async function openDashboard() {
-    await callRuntime({ type: 'OPEN_DASHBOARD' });
+    await callRuntime({ type: 'OPEN_DASHBOARD', sourceTabId: sourceTabId ?? undefined });
   }
 
   const isSupportedSite = activeSite === 'chatgpt';
+  const shellClassName = popupParams.embedded ? 'w-full min-h-full bg-transparent p-0 text-ink' : 'w-[500px] min-h-screen bg-transparent p-4 text-ink';
+  const cardClassName = popupParams.embedded ? 'h-full overflow-hidden rounded-none border-0 bg-white/92 shadow-none backdrop-blur' : 'overflow-hidden rounded-[30px] border border-white/70 bg-white/85 shadow-panel backdrop-blur';
 
   return (
-    <main className="w-[500px] min-h-screen bg-transparent p-4 text-ink">
-      <section className="overflow-hidden rounded-[30px] border border-white/70 bg-white/85 shadow-panel backdrop-blur">
+    <main className={shellClassName}>
+      <section className={cardClassName}>
         <div className="bg-[radial-gradient(circle_at_top_left,_rgba(230,126,34,0.22),_transparent_35%),linear-gradient(135deg,_#10233b,_#1e3556)] px-5 py-5 text-white">
           <div className="flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-3">
@@ -286,7 +293,7 @@ export function PopupApp() {
               <div className="min-w-0">
                 <p className="text-[11px] uppercase tracking-[0.32em] text-white/70">AI Chat Exporter</p>
                 <h1 className="mt-2 text-2xl font-semibold">{translate(language, 'exportCenter')}</h1>
-                <p className="mt-2 max-w-[260px] text-sm leading-6 text-white/75">{isZh ? '这是一个可移动的小窗，权限弹窗不会再把它直接关掉。' : 'This is a movable mini window, so permission prompts will not close it immediately.'}</p>
+                <p className="mt-2 max-w-[260px] text-sm leading-6 text-white/75">{popupParams.embedded ? (isZh ? '这是页面内可拖动浮窗，你可以拖着它在页面里移动。' : 'This is a draggable in-page floating panel. You can move it anywhere on the page.') : (isZh ? '这是一个可移动的小窗，权限弹窗不会再把它直接关掉。' : 'This is a movable mini window, so permission prompts will not close it immediately.')}</p>
               </div>
             </div>
             <div className="w-[124px] shrink-0">
@@ -375,5 +382,3 @@ export function PopupApp() {
     </main>
   );
 }
-
-

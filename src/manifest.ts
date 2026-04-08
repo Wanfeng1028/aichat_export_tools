@@ -44,7 +44,7 @@ export const manifest = {
   ],
   web_accessible_resources: [
     {
-      resources: ['src/content/bridge.js', 'assets/*'],
+      resources: ['src/content/bridge.js', 'src/ui/popup/index.html', 'assets/*', 'logo.png'],
       matches: ['<all_urls>']
     }
   ],
