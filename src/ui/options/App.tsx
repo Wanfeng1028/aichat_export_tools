@@ -7,9 +7,14 @@ export function OptionsApp() {
   return (
     <main className="min-h-screen bg-transparent px-6 py-8 text-ink">
       <section className="mx-auto max-w-3xl rounded-[32px] border border-white/60 bg-white/85 p-8 shadow-panel backdrop-blur">
-        <p className="text-xs uppercase tracking-[0.3em] text-tide">{translate(language, 'options')}</p>
-        <h1 className="mt-2 text-4xl font-semibold">{translate(language, 'preferences')}</h1>
-        <p className="mt-4 text-sm text-slate-600">{translate(language, 'optionsIntro')}</p>
+        <div className="flex items-start gap-4">
+          <img src="/logo.png" alt="AI Chat Exporter" className="h-16 w-16 rounded-3xl border border-slate-200 bg-white object-cover shadow-sm" />
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-tide">{translate(language, 'options')}</p>
+            <h1 className="mt-2 text-4xl font-semibold">{translate(language, 'preferences')}</h1>
+            <p className="mt-4 text-sm text-slate-600">{translate(language, 'optionsIntro')}</p>
+          </div>
+        </div>
 
         <div className="mt-8 max-w-xs rounded-2xl border border-slate-200 bg-slate-50 p-4">
           <label className="block text-sm font-medium text-slate-800">{translate(language, 'switchLanguage')}</label>

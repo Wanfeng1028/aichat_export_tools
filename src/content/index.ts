@@ -3,12 +3,19 @@ import { createLogger } from '../core/logger';
 
 const logger = createLogger('content');
 
+type ContentErrorResponse = { __contentError: string };
+
 function getAdapter() {
   if (globalThis.location.hostname.includes('chatgpt.com')) {
     return createChatGptAdapter();
   }
 
   return null;
+}
+
+function toErrorResponse(error: unknown): ContentErrorResponse {
+  const message = error instanceof Error ? error.message : 'Unknown content script error.';
+  return { __contentError: message };
 }
 
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
@@ -42,7 +49,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.type === 'CONTENT_SCAN_CONVERSATIONS') {
     void adapter.scanConversationList().then(sendResponse).catch((error: unknown) => {
       logger.error(error);
-      sendResponse(undefined);
+      sendResponse(toErrorResponse(error));
     });
     return true;
   }
@@ -50,7 +57,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.type === 'CONTENT_EXPORT_CURRENT_CONVERSATION') {
     void adapter.exportCurrentConversation().then(sendResponse).catch((error: unknown) => {
       logger.error(error);
-      sendResponse(undefined);
+      sendResponse(toErrorResponse(error));
     });
     return true;
   }

@@ -7,10 +7,11 @@ import type {
   ExportHistoryRecord,
   ExportJobRecord
 } from '../core/types';
-import { addHistoryRecord, listHistoryRecords } from '../storage/history';
-import { listJobRecords, updateJobStatus, upsertJobRecord } from '../storage/jobs';
+import { addHistoryRecord, clearHistoryRecords, listHistoryRecords } from '../storage/history';
+import { clearJobRecords, listJobRecords, updateJobStatus, upsertJobRecord } from '../storage/jobs';
 import { exportConversation, exportConversationBatch } from '../exporters';
 import { downloadArtifact } from './download';
+import { hasSitePermissionForUrl, hasTabsPermission } from './permissions';
 
 export type RuntimeRequest =
   | { type: 'GET_ACTIVE_SITE_STATUS'; sourceTabId?: number }
@@ -19,7 +20,8 @@ export type RuntimeRequest =
   | { type: 'EXPORT_SELECTED_CONVERSATIONS'; sourceTabId: number; format: ExportFormat; conversations: ConversationSummary[] }
   | { type: 'LIST_EXPORT_HISTORY' }
   | { type: 'LIST_EXPORT_JOBS' }
-  | { type: 'OPEN_DASHBOARD' };
+  | { type: 'CLEAR_EXPORT_DATA' }
+  | { type: 'OPEN_DASHBOARD'; sourceTabId?: number };
 
 export type RuntimeResponse =
   | { ok: true; status: AdapterStatus }
@@ -31,14 +33,15 @@ export type RuntimeResponse =
   | { ok: true }
   | { ok: false; error: string };
 
-async function ensureTabsPermission(): Promise<void> {
-  const granted = await chrome.permissions.contains({ permissions: ['tabs'] });
-  if (granted) return;
+type ContentErrorEnvelope = { __contentError: string };
 
-  const approved = await chrome.permissions.request({ permissions: ['tabs'] });
-  if (!approved) {
-    throw new Error('Batch export needs tabs permission to open conversations in background tabs.');
-  }
+function isContentErrorEnvelope(value: unknown): value is ContentErrorEnvelope {
+  return Boolean(value) && typeof value === 'object' && '__contentError' in value && typeof (value as { __contentError?: unknown }).__contentError === 'string';
+}
+
+async function ensureTabsPermission(): Promise<void> {
+  const granted = await hasTabsPermission();
+  if (!granted) throw new Error('Please grant tabs permission before batch exporting.');
 }
 
 async function getActiveTabId(): Promise<number> {
@@ -51,10 +54,34 @@ async function resolveSourceTabId(sourceTabId?: number): Promise<number> {
   return sourceTabId ?? getActiveTabId();
 }
 
-async function sendMessageToTab<T>(tabId: number, message: unknown): Promise<T> {
-  const response = (await chrome.tabs.sendMessage(tabId, message)) as T | undefined;
+async function ensureAccessToTab(tabId: number): Promise<void> {
+  const tab = await chrome.tabs.get(tabId);
+  const permission = await hasSitePermissionForUrl(tab.url);
+  if (!permission.granted) throw new Error('Please grant this site permission before exporting or scanning.');
+}
+
+async function injectContentScript(tabId: number): Promise<void> {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content/index.js'] });
+}
+
+function unwrapContentResponse<T>(response: T | ContentErrorEnvelope | undefined): T {
   if (!response) throw new Error('The content script did not return a response.');
+  if (isContentErrorEnvelope(response)) throw new Error(response.__contentError);
   return response;
+}
+
+async function sendMessageToTab<T>(tabId: number, message: unknown): Promise<T> {
+  try {
+    const response = (await chrome.tabs.sendMessage(tabId, message)) as T | ContentErrorEnvelope | undefined;
+    return unwrapContentResponse<T>(response);
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    if (!messageText.includes('Receiving end does not exist') && !messageText.includes('Cannot access contents of the page')) throw error;
+    await ensureAccessToTab(tabId);
+    await injectContentScript(tabId);
+    const retryResponse = (await chrome.tabs.sendMessage(tabId, message)) as T | ContentErrorEnvelope | undefined;
+    return unwrapContentResponse<T>(retryResponse);
+  }
 }
 
 export async function requestContentStatus(sourceTabId?: number): Promise<AdapterStatus> {
@@ -63,11 +90,13 @@ export async function requestContentStatus(sourceTabId?: number): Promise<Adapte
 }
 
 export async function requestConversationScan(sourceTabId: number): Promise<ConversationSummary[]> {
+  await ensureAccessToTab(sourceTabId);
   return sendMessageToTab<ConversationSummary[]>(sourceTabId, { type: 'CONTENT_SCAN_CONVERSATIONS' });
 }
 
 export async function requestCurrentConversation(sourceTabId?: number): Promise<ChatConversation> {
   const tabId = await resolveSourceTabId(sourceTabId);
+  await ensureAccessToTab(tabId);
   return sendMessageToTab<ChatConversation>(tabId, { type: 'CONTENT_EXPORT_CURRENT_CONVERSATION' });
 }
 
@@ -83,7 +112,6 @@ async function recordSuccess(conversation: ChatConversation, format: ExportForma
 async function waitForTabComplete(tabId: number): Promise<void> {
   const existing = await chrome.tabs.get(tabId);
   if (existing.status === 'complete') return;
-
   await new Promise<void>((resolve) => {
     const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
       if (updatedTabId === tabId && changeInfo.status === 'complete') {
@@ -95,24 +123,30 @@ async function waitForTabComplete(tabId: number): Promise<void> {
   });
 }
 
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function exportConversationFromUrl(url: string): Promise<ChatConversation> {
   const tab = await chrome.tabs.create({ url, active: false });
   if (!tab.id) throw new Error(`Failed to create a temporary tab for ${url}.`);
 
   try {
     await waitForTabComplete(tab.id);
-    await new Promise((resolve) => setTimeout(resolve, 1200));
 
+    let lastError: unknown = null;
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
-        return await sendMessageToTab<ChatConversation>(tab.id, { type: 'CONTENT_EXPORT_CURRENT_CONVERSATION' });
+        if (attempt > 0) {
+          await delay(900);
+        }
+        return await requestCurrentConversation(tab.id);
       } catch (error) {
-        if (attempt === 4) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 600));
+        lastError = error;
       }
     }
 
-    throw new Error(`Failed to export conversation at ${url}.`);
+    throw lastError instanceof Error ? lastError : new Error(`Failed to export ${url}.`);
   } finally {
     await chrome.tabs.remove(tab.id);
   }
@@ -123,7 +157,6 @@ async function exportCurrentConversationFlow(format: ExportFormat, sourceTabId?:
   const job = createJobRecord(conversation, format);
   await upsertJobRecord(job);
   await updateJobStatus(job.id, 'running');
-
   try {
     const artifact = await exportConversation(conversation, format);
     await downloadArtifact(artifact);
@@ -138,6 +171,7 @@ async function exportCurrentConversationFlow(format: ExportFormat, sourceTabId?:
 
 async function exportSelectedConversationsFlow(sourceTabId: number, format: ExportFormat, conversations: ConversationSummary[]): Promise<BatchExportResult> {
   await ensureTabsPermission();
+  await ensureAccessToTab(sourceTabId);
   const successful: ChatConversation[] = [];
   let failedCount = 0;
   const sourceTab = await chrome.tabs.get(sourceTabId);
@@ -146,9 +180,10 @@ async function exportSelectedConversationsFlow(sourceTabId: number, format: Expo
     const job = createJobRecord({ id: summary.id, site: summary.site, title: summary.title, exportedAt: new Date().toISOString() }, format);
     await upsertJobRecord(job);
     await updateJobStatus(job.id, 'running');
-
     try {
-      const conversation = sourceTab.url && sourceTab.url.includes(summary.id) ? await requestCurrentConversation(sourceTabId) : await exportConversationFromUrl(summary.url);
+      const conversation = sourceTab.url && sourceTab.url.includes(summary.id)
+        ? await requestCurrentConversation(sourceTabId)
+        : await exportConversationFromUrl(summary.url);
       successful.push(conversation);
       await updateJobStatus(job.id, 'completed');
     } catch (error) {
@@ -158,7 +193,6 @@ async function exportSelectedConversationsFlow(sourceTabId: number, format: Expo
   }
 
   if (successful.length === 0) throw new Error('All selected conversations failed to export.');
-
   const artifact = await exportConversationBatch(successful, format);
   await downloadArtifact(artifact);
   await addHistoryRecord({ id: `batch-${format}-${Date.now()}`, site: successful[0].site, conversationId: 'batch', title: `Batch export (${successful.length} conversations)`, format: 'zip', createdAt: new Date().toISOString(), filename: artifact.filename });
@@ -173,8 +207,13 @@ export async function handleRuntimeRequest(request: RuntimeRequest): Promise<Run
     if (request.type === 'EXPORT_SELECTED_CONVERSATIONS') return { ok: true, batch: await exportSelectedConversationsFlow(request.sourceTabId, request.format, request.conversations) };
     if (request.type === 'LIST_EXPORT_HISTORY') return { ok: true, history: await listHistoryRecords() };
     if (request.type === 'LIST_EXPORT_JOBS') return { ok: true, jobs: await listJobRecords() };
+    if (request.type === 'CLEAR_EXPORT_DATA') {
+      await clearHistoryRecords();
+      await clearJobRecords();
+      return { ok: true };
+    }
     if (request.type === 'OPEN_DASHBOARD') {
-      const sourceTabId = await getActiveTabId();
+      const sourceTabId = await resolveSourceTabId(request.sourceTabId);
       await chrome.tabs.create({ url: chrome.runtime.getURL(`src/ui/dashboard/index.html?sourceTabId=${sourceTabId}`) });
       return { ok: true };
     }

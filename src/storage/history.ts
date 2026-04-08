@@ -8,3 +8,7 @@ export async function addHistoryRecord(record: ExportHistoryRecord): Promise<voi
 export async function listHistoryRecords(): Promise<ExportHistoryRecord[]> {
   return db.exportHistory.orderBy('createdAt').reverse().limit(20).toArray();
 }
+
+export async function clearHistoryRecords(): Promise<void> {
+  await db.exportHistory.clear();
+}

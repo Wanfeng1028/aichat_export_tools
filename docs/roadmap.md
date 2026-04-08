@@ -1,5 +1,24 @@
 # Roadmap
 
-- v0.1: ChatGPT current conversation Markdown export
-- v0.2: PDF, DOCX, ZIP, history polish
-- v0.3: More adapters and workspace support
+## Shipped
+
+- extension scaffold with Manifest V3
+- popup, dashboard, and options pages
+- ChatGPT extraction workflow
+- Markdown, PDF, DOCX, and ZIP exporters
+- batch export archive generation
+- IndexedDB-backed history and job tracking
+- base project documentation and CI scaffolding
+
+## Next
+
+- additional site adapters
+- workspace-aware scanning
+- settings for export defaults and filename templates
+- better retry and preview flows
+
+## Later
+
+- Firefox packaging helpers
+- release automation
+- contribution flow for community adapters

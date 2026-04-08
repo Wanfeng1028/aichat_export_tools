@@ -3,6 +3,10 @@ import type { AdapterStatus, ChatConversation, ConversationSummary } from '../..
 import { parseChatGptConversation, scanChatGptConversationList } from './parser';
 import { chatGptSelectors } from './selectors';
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class ChatGptAdapter extends BaseAdapter {
   readonly site = 'chatgpt' as const;
 
@@ -25,13 +29,27 @@ export class ChatGptAdapter extends BaseAdapter {
   }
 
   async exportCurrentConversation(): Promise<ChatConversation> {
-    const conversation = parseChatGptConversation();
-    this.ensure(conversation.messages.length > 0, 'No conversation messages were found on the current page.');
-    return conversation;
+    let lastConversation: ChatConversation | null = null;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const conversation = parseChatGptConversation();
+      lastConversation = conversation;
+      if (conversation.messages.length > 0) {
+        return conversation;
+      }
+      await delay(600);
+    }
+
+    this.ensure(lastConversation && lastConversation.messages.length > 0, 'No conversation messages were found on the current page.');
+    return lastConversation;
   }
 
   async scanConversationList(): Promise<ConversationSummary[]> {
-    const conversations = scanChatGptConversationList();
+    let conversations = scanChatGptConversationList();
+    for (let attempt = 0; attempt < 3 && conversations.length === 0; attempt += 1) {
+      await delay(500);
+      conversations = scanChatGptConversationList();
+    }
     this.ensure(conversations.length > 0, 'No conversation links were found. Expand the ChatGPT sidebar and try again.');
     return conversations;
   }
