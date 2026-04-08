@@ -1,18 +1,21 @@
-import type { AdapterStatus, ChatConversation, ExportFormat, ExportHistoryRecord } from '../core/types';
+import type { AdapterStatus, ChatConversation, ExportFormat, ExportHistoryRecord, ExportJobRecord } from '../core/types';
 import { addHistoryRecord, listHistoryRecords } from '../storage/history';
+import { listJobRecords, updateJobStatus, upsertJobRecord } from '../storage/jobs';
 import { exportConversation } from '../exporters';
 import { downloadArtifact } from './download';
 
 export type RuntimeRequest =
   | { type: 'GET_ACTIVE_SITE_STATUS' }
-  | { type: 'EXPORT_CURRENT_CONVERSATION'; format: Extract<ExportFormat, 'markdown' | 'pdf' | 'docx'> }
+  | { type: 'EXPORT_CURRENT_CONVERSATION'; format: ExportFormat }
   | { type: 'LIST_EXPORT_HISTORY' }
+  | { type: 'LIST_EXPORT_JOBS' }
   | { type: 'OPEN_DASHBOARD' };
 
 export type RuntimeResponse =
   | { ok: true; status: AdapterStatus }
   | { ok: true; conversation: ChatConversation }
   | { ok: true; history: ExportHistoryRecord[] }
+  | { ok: true; jobs: ExportJobRecord[] }
   | { ok: true }
   | { ok: false; error: string };
 
@@ -47,6 +50,21 @@ export async function requestCurrentConversation(): Promise<ChatConversation> {
   return response;
 }
 
+function createJobRecord(conversation: ChatConversation, format: ExportFormat): ExportJobRecord {
+  const now = new Date().toISOString();
+
+  return {
+    id: `${conversation.id}-${format}-${conversation.exportedAt}`,
+    site: conversation.site,
+    conversationId: conversation.id,
+    title: conversation.title,
+    format,
+    status: 'queued',
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
 export async function handleRuntimeRequest(request: RuntimeRequest): Promise<RuntimeResponse> {
   try {
     if (request.type === 'GET_ACTIVE_SITE_STATUS') {
@@ -56,23 +74,39 @@ export async function handleRuntimeRequest(request: RuntimeRequest): Promise<Run
 
     if (request.type === 'EXPORT_CURRENT_CONVERSATION') {
       const conversation = await requestCurrentConversation();
-      const artifact = await exportConversation(conversation, request.format);
-      await downloadArtifact(artifact);
-      await addHistoryRecord({
-        id: `${conversation.id}-${request.format}-${conversation.exportedAt}`,
-        site: conversation.site,
-        conversationId: conversation.id,
-        title: conversation.title,
-        format: request.format,
-        createdAt: conversation.exportedAt,
-        filename: artifact.filename
-      });
+      const job = createJobRecord(conversation, request.format);
+      await upsertJobRecord(job);
+      await updateJobStatus(job.id, 'running');
+
+      try {
+        const artifact = await exportConversation(conversation, request.format);
+        await downloadArtifact(artifact);
+        await addHistoryRecord({
+          id: `${conversation.id}-${request.format}-${conversation.exportedAt}`,
+          site: conversation.site,
+          conversationId: conversation.id,
+          title: conversation.title,
+          format: request.format,
+          createdAt: conversation.exportedAt,
+          filename: artifact.filename
+        });
+        await updateJobStatus(job.id, 'completed');
+      } catch (error) {
+        await updateJobStatus(job.id, 'failed', error instanceof Error ? error.message : 'Unexpected export error');
+        throw error;
+      }
+
       return { ok: true, conversation };
     }
 
     if (request.type === 'LIST_EXPORT_HISTORY') {
       const history = await listHistoryRecords();
       return { ok: true, history };
+    }
+
+    if (request.type === 'LIST_EXPORT_JOBS') {
+      const jobs = await listJobRecords();
+      return { ok: true, jobs };
     }
 
     if (request.type === 'OPEN_DASHBOARD') {

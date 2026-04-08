@@ -1,19 +1,24 @@
 import type { ExportFormat, ExportArtifact, ChatConversation } from '../core/types';
-import { exportConversationToMarkdown } from './markdown';
-import { exportConversationToPdf } from './pdf';
-import { exportConversationToDocx } from './docx';
 
 export async function exportConversation(conversation: ChatConversation, format: ExportFormat): Promise<ExportArtifact> {
   if (format === 'markdown') {
-    return exportConversationToMarkdown(conversation);
+    const module = await import('./markdown');
+    return module.exportConversationToMarkdown(conversation);
   }
 
   if (format === 'pdf') {
-    return exportConversationToPdf(conversation);
+    const module = await import('./pdf');
+    return module.exportConversationToPdf(conversation);
   }
 
   if (format === 'docx') {
-    return exportConversationToDocx(conversation);
+    const module = await import('./docx');
+    return module.exportConversationToDocx(conversation);
+  }
+
+  if (format === 'zip') {
+    const module = await import('./zip');
+    return module.exportConversationToZip(conversation);
   }
 
   throw new Error(`Unsupported export format: ${format}`);

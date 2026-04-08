@@ -1,6 +1,7 @@
 export type SupportedSite = 'chatgpt' | 'claude' | 'gemini' | 'kimi' | 'deepseek' | 'grok';
 export type ExportFormat = 'markdown' | 'pdf' | 'docx' | 'zip';
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
+export type JobStatus = 'queued' | 'running' | 'completed' | 'failed';
 
 export interface ChatAttachment {
   name: string;
@@ -42,6 +43,18 @@ export interface ExportHistoryRecord {
   format: ExportFormat;
   createdAt: string;
   filename: string;
+}
+
+export interface ExportJobRecord {
+  id: string;
+  site: SupportedSite;
+  conversationId: string;
+  title: string;
+  format: ExportFormat;
+  status: JobStatus;
+  createdAt: string;
+  updatedAt: string;
+  error?: string;
 }
 
 export interface AdapterStatus {

@@ -2,20 +2,21 @@ import { useEffect, useState } from 'react';
 import type { AdapterStatus, ExportFormat } from '../../core/types';
 import type { RuntimeResponse } from '../../background/message-bus';
 
-const exportFormats: Array<{ value: Extract<ExportFormat, 'markdown' | 'pdf' | 'docx'>; label: string; hint: string }> = [
+const exportFormats: Array<{ value: ExportFormat; label: string; hint: string }> = [
   { value: 'markdown', label: 'Markdown', hint: 'Best for notes and git-friendly archives' },
   { value: 'pdf', label: 'PDF', hint: 'Best for snapshots, sharing, and printing' },
-  { value: 'docx', label: 'DOCX', hint: 'Best for editing in office tools' }
+  { value: 'docx', label: 'DOCX', hint: 'Best for editing in office tools' },
+  { value: 'zip', label: 'ZIP Bundle', hint: 'Packs Markdown, PDF, and DOCX together' }
 ];
 
-async function callRuntime(message: { type: string; format?: Extract<ExportFormat, 'markdown' | 'pdf' | 'docx'> }): Promise<RuntimeResponse> {
+async function callRuntime(message: { type: string; format?: ExportFormat }): Promise<RuntimeResponse> {
   return chrome.runtime.sendMessage(message) as Promise<RuntimeResponse>;
 }
 
 export function PopupApp() {
   const [status, setStatus] = useState<AdapterStatus | null>(null);
   const [busy, setBusy] = useState(false);
-  const [format, setFormat] = useState<Extract<ExportFormat, 'markdown' | 'pdf' | 'docx'>>('markdown');
+  const [format, setFormat] = useState<ExportFormat>('markdown');
   const [feedback, setFeedback] = useState<string>('Scanning the current tab...');
 
   useEffect(() => {
@@ -56,7 +57,7 @@ export function PopupApp() {
         <div className="mb-5">
           <p className="text-xs uppercase tracking-[0.24em] text-tide">AI Chat Exporter</p>
           <h1 className="mt-2 text-2xl font-semibold">Current tab export</h1>
-          <p className="mt-2 text-sm text-slate-600">ChatGPT MVP now supports Markdown, PDF, and DOCX export for the current conversation.</p>
+          <p className="mt-2 text-sm text-slate-600">ChatGPT current conversation export now supports Markdown, PDF, DOCX, and a ZIP bundle.</p>
         </div>
 
         <div className="rounded-2xl bg-slate-900 px-4 py-3 text-sm text-slate-100">
@@ -101,7 +102,7 @@ export function PopupApp() {
             disabled={busy || !status?.canExportCurrentConversation}
             className="rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
-            {busy ? 'Exporting...' : `Export as ${format.toUpperCase()}`}
+            {busy ? 'Exporting...' : `Export as ${format === 'zip' ? 'ZIP Bundle' : format.toUpperCase()}`}
           </button>
           <button
             type="button"
