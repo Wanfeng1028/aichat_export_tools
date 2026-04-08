@@ -8,7 +8,7 @@ function setDocumentMarkup(markup: string, title = 'ChatGPT') {
 }
 
 describe('ChatGPT parser', () => {
-  const originalPath = window.location.pathname + window.location.search + window.location.hash;
+  const originalPath = window.location.pathname;
 
   beforeEach(() => {
     document.body.innerHTML = '';

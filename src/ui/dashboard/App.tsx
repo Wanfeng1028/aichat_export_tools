@@ -428,6 +428,7 @@ export function DashboardApp() {
                     <div key={item.id} className="rounded-2xl bg-white px-4 py-4">
                       <div className="truncate text-sm font-medium text-slate-900">{item.title}</div>
                       <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500"><span>{item.filename}</span><span>{new Date(item.createdAt).toLocaleString()}</span></div>
+
                       <div className="mt-2 text-xs text-slate-500">
                         <span className="font-medium text-slate-700">{translate(language, 'savedAs')}:</span>{' '}
                         <span className="break-all">{item.savedAs ?? translate(language, 'unavailableDownloadPath')}</span>
@@ -453,3 +454,5 @@ export function DashboardApp() {
     </main>
   );
 }
+
+
