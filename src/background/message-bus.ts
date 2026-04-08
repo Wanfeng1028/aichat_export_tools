@@ -1,11 +1,11 @@
-import type { AdapterStatus, ChatConversation, ExportHistoryRecord } from '../core/types';
+import type { AdapterStatus, ChatConversation, ExportFormat, ExportHistoryRecord } from '../core/types';
 import { addHistoryRecord, listHistoryRecords } from '../storage/history';
-import { exportConversationToMarkdown } from '../exporters/markdown';
+import { exportConversation } from '../exporters';
 import { downloadArtifact } from './download';
 
 export type RuntimeRequest =
   | { type: 'GET_ACTIVE_SITE_STATUS' }
-  | { type: 'EXPORT_CURRENT_CONVERSATION'; format: 'markdown' }
+  | { type: 'EXPORT_CURRENT_CONVERSATION'; format: Extract<ExportFormat, 'markdown' | 'pdf' | 'docx'> }
   | { type: 'LIST_EXPORT_HISTORY' }
   | { type: 'OPEN_DASHBOARD' };
 
@@ -56,10 +56,10 @@ export async function handleRuntimeRequest(request: RuntimeRequest): Promise<Run
 
     if (request.type === 'EXPORT_CURRENT_CONVERSATION') {
       const conversation = await requestCurrentConversation();
-      const artifact = await exportConversationToMarkdown(conversation);
+      const artifact = await exportConversation(conversation, request.format);
       await downloadArtifact(artifact);
       await addHistoryRecord({
-        id: `${conversation.id}-${conversation.exportedAt}`,
+        id: `${conversation.id}-${request.format}-${conversation.exportedAt}`,
         site: conversation.site,
         conversationId: conversation.id,
         title: conversation.title,
