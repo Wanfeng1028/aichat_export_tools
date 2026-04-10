@@ -5,7 +5,7 @@ import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestPermissions
 import { languageOptions, translate } from '../shared/i18n';
 import { useLanguage } from '../shared/hooks/useLanguage';
 import { getSettings } from '../../storage/settings';
-import { getScannedConversationCache, setScannedConversationCache, subscribeScannedConversationCache } from '../../storage/scanned-conversations';
+import { clearScannedConversationCache, getScannedConversationCache, setScannedConversationCache, subscribeScannedConversationCache } from '../../storage/scanned-conversations';
 
 const exportFormats: Array<{ value: ExportFormat; label: string; hintKey: 'markdownHint' | 'pdfHint' | 'docxHint' | 'zipHint' }> = [
   { value: 'markdown', label: 'Markdown', hintKey: 'markdownHint' },
@@ -42,7 +42,7 @@ function getPopupParams(): { sourceTabId: number | null; embedded: boolean } {
   };
 }
 
-async function callRuntime(message: { type: string; format?: ExportFormat; sourceTabId?: number; conversations?: ConversationSummary[] }): Promise<RuntimeResponse> {
+async function callRuntime(message: Record<string, unknown>): Promise<RuntimeResponse> {
   return chrome.runtime.sendMessage(message) as Promise<RuntimeResponse>;
 }
 
@@ -65,7 +65,6 @@ export function PopupApp() {
 
   const currentSiteMatches = activeSite === sourceSite;
   const supportsBatch = currentSiteMatches;
-  const supportsTeamWorkspace = currentSiteMatches && activeSite === 'chatgpt';
 
   function pushLog(text: string, level: PopupLogItem['level'] = 'info') {
     setLogs((current) => [{ id: `${Date.now()}-${current.length}`, text, level }, ...current].slice(0, 12));
@@ -107,23 +106,37 @@ export function PopupApp() {
     return tabId;
   }
 
+  async function syncCacheForSite(tabId: number, site: SupportedSite) {
+    const cache = await getScannedConversationCache(tabId);
+    if (!cache || cache.site === site) {
+      setConversations(cache?.conversations ?? []);
+      return;
+    }
+
+    await clearScannedConversationCache(tabId);
+    setConversations([]);
+  }
+
   async function refreshPageContext() {
     const tabId = await resolveSourceTab();
     if (!tabId) {
       setStatusText(translate(language, 'noActiveSiteTab'));
       setSourceUrl(null);
       setPermissionGranted(false);
+      setConversations([]);
       return;
     }
 
     const tab = await chrome.tabs.get(tabId);
-    setSourceUrl(tab.url ?? null);
-    const detectedSite = detectSupportedSiteFromUrl(tab.url) ?? 'chatgpt';
+    const nextUrl = tab.url ?? null;
+    const detectedSite = detectSupportedSiteFromUrl(nextUrl) ?? 'chatgpt';
+    setSourceUrl(nextUrl);
     setSourceSite(detectedSite);
     setActiveSite(detectedSite);
 
-    const permission = await hasSitePermissionForUrl(tab.url);
+    const permission = await hasSitePermissionForUrl(nextUrl);
     setPermissionGranted(permission.granted);
+    await syncCacheForSite(tabId, detectedSite);
 
     const response = await callRuntime({ type: 'GET_ACTIVE_SITE_STATUS', sourceTabId: tabId });
     if (response.ok && 'status' in response) {
@@ -134,52 +147,13 @@ export function PopupApp() {
     setStatusText(response.ok ? translate(language, 'unknownResponse') : response.error);
   }
 
-  useEffect(() => {
-    if (!ready) return;
-    setStatusText(translate(language, 'scanningCurrentTab'));
-    void refreshPageContext();
-  }, [language, ready]);
-
-  useEffect(() => {
-    void (async () => {
-      const settings = await getSettings();
-      setFormat(settings.preferredFormat);
-    })();
-  }, []);
-
-  useEffect(() => {
-    if (!sourceTabId) {
-      setConversations([]);
-      return;
-    }
-
-    let cancelled = false;
-    void getScannedConversationCache(sourceTabId).then((cache) => {
-      if (cancelled) return;
-      setConversations(cache?.conversations ?? []);
-    });
-
-    const unsubscribe = subscribeScannedConversationCache(sourceTabId, (cache) => {
-      if (cancelled) return;
-      setConversations(cache?.conversations ?? []);
-    });
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, [sourceTabId]);
-
-  const conversationCountLabel = useMemo(() => {
-    if (!currentSiteMatches) {
-      return isZh ? '等待切换源标签页' : 'Waiting for matching tab';
-    }
-    if (!supportsBatch) {
-      return isZh ? '当前模式' : 'Current-only mode';
-    }
-    if (conversations.length === 0) return translate(language, 'noScanYet');
-    return `${conversations.length} ${translate(language, 'detectedSuffix')}`;
-  }, [conversations, currentSiteMatches, language, supportsBatch, isZh]);
+  async function getCurrentStatus() {
+    if (!sourceTabId) return null;
+    const response = await callRuntime({ type: 'GET_ACTIVE_SITE_STATUS', sourceTabId });
+    if (response.ok && 'status' in response) return response.status;
+    if (!response.ok) throw new Error(response.error);
+    return null;
+  }
 
   async function ensureSitePermission(needTabs = false) {
     if (!sourceTabId || !sourceUrl) {
@@ -202,6 +176,104 @@ export function PopupApp() {
     markStep(needTabs ? 46 : 30, needTabs ? (isZh ? '站点和批量导出权限已确认。' : 'Site and batch export permissions confirmed.') : (isZh ? '站点权限已确认。' : 'Site permission confirmed.'));
     return true;
   }
+
+  async function scanConversationsForSite(autoMode = false): Promise<ConversationSummary[]> {
+    if (!sourceTabId) return [];
+    if (autoMode) {
+      markStep(52, isZh ? '当前页面不是会话详情，正在改为扫描会话列表...' : 'This page is not a conversation detail view. Scanning the conversation list instead...');
+    } else {
+      markStep(52, translate(language, 'scanningConversationList'));
+    }
+
+    const response = await callRuntime({ type: 'SCAN_CONVERSATIONS', sourceTabId });
+    if (!(response.ok && 'conversations' in response)) {
+      throw new Error(response.ok ? translate(language, 'scanFinished') : response.error);
+    }
+
+    setConversations(response.conversations);
+    await setScannedConversationCache(sourceTabId, sourceSite, response.conversations);
+    return response.conversations;
+  }
+
+  useEffect(() => {
+    if (!ready) return;
+    setStatusText(translate(language, 'scanningCurrentTab'));
+    void refreshPageContext();
+  }, [language, ready]);
+
+  useEffect(() => {
+    void (async () => {
+      const settings = await getSettings();
+      setFormat(settings.preferredFormat);
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!sourceTabId) {
+      setConversations([]);
+      return;
+    }
+
+    let cancelled = false;
+    void getScannedConversationCache(sourceTabId).then(async (cache) => {
+      if (cancelled) return;
+      if (!cache || cache.site === sourceSite) {
+        setConversations(cache?.conversations ?? []);
+        return;
+      }
+      await clearScannedConversationCache(sourceTabId);
+      if (!cancelled) setConversations([]);
+    });
+
+    const unsubscribe = subscribeScannedConversationCache(sourceTabId, (cache) => {
+      if (cancelled) return;
+      if (!cache || cache.site === sourceSite) {
+        setConversations(cache?.conversations ?? []);
+        return;
+      }
+      void clearScannedConversationCache(sourceTabId);
+      setConversations([]);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [sourceSite, sourceTabId]);
+
+  useEffect(() => {
+    if (!sourceTabId) return;
+
+    const handleUpdated = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (tabId !== sourceTabId) return;
+      if (!changeInfo.url && changeInfo.status !== 'complete') return;
+      void refreshPageContext();
+    };
+
+    const handleRemoved = (tabId: number) => {
+      if (tabId !== sourceTabId) return;
+      setSourceTabId(null);
+      setSourceUrl(null);
+      setConversations([]);
+      setPermissionGranted(false);
+      setStatusText(translate(language, 'sourceTabMissing'));
+    };
+
+    chrome.tabs.onUpdated.addListener(handleUpdated);
+    chrome.tabs.onRemoved.addListener(handleRemoved);
+    return () => {
+      chrome.tabs.onUpdated.removeListener(handleUpdated);
+      chrome.tabs.onRemoved.removeListener(handleRemoved);
+    };
+  }, [language, sourceTabId]);
+
+  const conversationCountLabel = useMemo(() => {
+    if (!currentSiteMatches) {
+      return isZh ? '等待切换源标签页' : 'Waiting for matching tab';
+    }
+    if (conversations.length === 0) return translate(language, 'noScanYet');
+    return `${conversations.length} ${translate(language, 'detectedSuffix')}`;
+  }, [conversations, currentSiteMatches, language, isZh]);
 
   async function handleGrantPermission() {
     if (!sourceTabId || !sourceUrl || !currentSiteMatches) return;
@@ -228,12 +300,35 @@ export function PopupApp() {
     startProgress(translate(language, 'exportingCurrentAs', { format: format.toUpperCase() }));
     setBusy(true);
     try {
-      if (!(await ensureSitePermission())) return;
-      markStep(52, isZh ? '正在抓取当前会话内容...' : 'Capturing current conversation...');
-      const response = await callRuntime({ type: 'EXPORT_CURRENT_CONVERSATION', format, sourceTabId });
+      const status = await getCurrentStatus();
+      const needsFallback = !status?.canExportCurrentConversation;
+      if (!(await ensureSitePermission(needsFallback))) return;
+
+      if (!needsFallback) {
+        markStep(52, isZh ? '正在抓取当前会话内容...' : 'Capturing current conversation...');
+        const response = await callRuntime({ type: 'EXPORT_CURRENT_CONVERSATION', format, sourceTabId });
+        if (response.ok && 'conversation' in response) {
+          setPreviewConversation(response.conversation);
+          markStep(90, isZh ? '导出内容已生成，正在落盘...' : 'Export artifact generated. Saving file...');
+          completeProgress(translate(language, 'exportedConversation', { title: response.conversation.title }));
+          return;
+        }
+        failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
+        return;
+      }
+
+      const scanned = conversations.length > 0 ? conversations : await scanConversationsForSite(true);
+      const fallback = scanned[0];
+      if (!fallback) {
+        failProgress(isZh ? '没有找到可回退导出的会话。' : 'No fallback conversation was found.');
+        return;
+      }
+
+      markStep(76, isZh ? `当前页面是新对话，改为导出首条会话：${fallback.title}` : `This is a new-chat page. Exporting the first conversation instead: ${fallback.title}`);
+      const response = await callRuntime({ type: 'EXPORT_CONVERSATION_FROM_SUMMARY', format, sourceTabId, summary: fallback });
       if (response.ok && 'conversation' in response) {
         setPreviewConversation(response.conversation);
-        markStep(90, isZh ? '导出内容已生成，正在落盘...' : 'Export artifact generated. Saving file...');
+        markStep(92, isZh ? '导出内容已生成，正在落盘...' : 'Export artifact generated. Saving file...');
         completeProgress(translate(language, 'exportedConversation', { title: response.conversation.title }));
       } else {
         failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
@@ -251,17 +346,9 @@ export function PopupApp() {
     setBusy(true);
     try {
       if (!(await ensureSitePermission())) return;
-      markStep(52, translate(language, 'scanningConversationList'));
-
-      const response = await callRuntime({ type: 'SCAN_CONVERSATIONS', sourceTabId });
-      if (response.ok && 'conversations' in response) {
-        setConversations(response.conversations);
-        await setScannedConversationCache(sourceTabId, sourceSite, response.conversations);
-        markStep(88, isZh ? `已识别 ${response.conversations.length} 个会话。` : `Recognized ${response.conversations.length} conversations.`);
-        completeProgress(translate(language, 'scanCompleteFound', { count: response.conversations.length }));
-      } else {
-        failProgress(response.ok ? translate(language, 'scanFinished') : response.error);
-      }
+      const scanned = await scanConversationsForSite(false);
+      markStep(88, isZh ? `已识别 ${scanned.length} 个会话。` : `Recognized ${scanned.length} conversations.`);
+      completeProgress(translate(language, 'scanCompleteFound', { count: scanned.length }));
     } catch (error) {
       failProgress(error instanceof Error ? error.message : (isZh ? '扫描失败。' : 'Scan failed.'));
     } finally {
@@ -271,24 +358,24 @@ export function PopupApp() {
 
   async function handleExportAll() {
     if (!sourceTabId || !supportsBatch) return;
-    startProgress(isZh ? '正在准备导出全部会话...' : 'Preparing to export all conversations...');
+    startProgress(isZh ? '正在准备批量导出...' : 'Preparing batch export...');
     setBusy(true);
     try {
       if (!(await ensureSitePermission(true))) return;
       let selected = conversations;
       if (selected.length === 0) {
-        markStep(52, isZh ? '本地没有扫描结果，先自动扫描...' : 'No local scan result. Starting an automatic scan first...');
-        const scanResponse = await callRuntime({ type: 'SCAN_CONVERSATIONS', sourceTabId });
-        if (!(scanResponse.ok && 'conversations' in scanResponse)) {
-          failProgress(scanResponse.ok ? translate(language, 'scanFinished') : scanResponse.error);
-          return;
-        }
-        setConversations(scanResponse.conversations);
-        await setScannedConversationCache(sourceTabId, sourceSite, scanResponse.conversations);
-        selected = scanResponse.conversations;
+        const scanned = await scanConversationsForSite(true);
+        selected = scanned.slice(0, 5);
+        markStep(68, isZh ? `当前页面是新对话，默认改为导出前 ${selected.length} 条会话。` : `This is a new-chat page. Defaulting to the first ${selected.length} conversations.`);
+      } else {
+        markStep(68, isZh ? `准备导出 ${selected.length} 个会话...` : `Preparing ${selected.length} conversations for export...`);
       }
 
-      markStep(68, isZh ? `准备导出 ${selected.length} 个会话...` : `Preparing ${selected.length} conversations for export...`);
+      if (selected.length === 0) {
+        failProgress(isZh ? '没有找到可导出的会话。' : 'No exportable conversations were found.');
+        return;
+      }
+
       const response = await callRuntime({ type: 'EXPORT_SELECTED_CONVERSATIONS', sourceTabId, format, conversations: selected });
       if (response.ok && 'batch' in response) {
         markStep(92, isZh ? '批量归档已生成，正在落盘...' : 'Batch archive generated. Saving file...');
@@ -358,7 +445,7 @@ export function PopupApp() {
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-xs uppercase tracking-[0.24em] text-tide">{translate(language, 'conversationList')}</div>
               <div className="mt-2 text-lg font-semibold">{conversationCountLabel}</div>
-              <div className="mt-2 text-sm text-slate-500">{!currentSiteMatches ? (isZh ? '能力面板已切换，但执行会跟随当前源标签页。' : 'The capability tab changed, but execution still follows the current source tab.') : translate(language, 'sidebarTip')}</div>
+              <div className="mt-2 text-sm text-slate-500">{!currentSiteMatches ? (isZh ? '当前弹窗仍绑定原始源标签页，跨平台旧扫描结果不会再复用。' : 'This popup is still bound to the original source tab. Cross-site stale scan results are now blocked.') : translate(language, 'sidebarTip')}</div>
             </div>
           </div>
 

@@ -4,7 +4,7 @@ import type { RuntimeResponse } from '../../background/message-bus';
 import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestPermissionsForUrl } from '../../background/permissions';
 import { languageOptions, translate } from '../shared/i18n';
 import { useLanguage } from '../shared/hooks/useLanguage';
-import { getScannedConversationCache, type ScannedConversationCache, setScannedConversationCache, subscribeScannedConversationCache } from '../../storage/scanned-conversations';
+import { clearScannedConversationCache, getScannedConversationCache, type ScannedConversationCache, setScannedConversationCache, subscribeScannedConversationCache } from '../../storage/scanned-conversations';
 
 const exportFormats: Array<{ value: ExportFormat; label: string }> = [
   { value: 'markdown', label: 'Markdown' },
@@ -50,7 +50,7 @@ async function callRuntime(message: Record<string, unknown>): Promise<RuntimeRes
 export function DashboardApp() {
   const { language, setLanguage } = useLanguage();
   const isZh = language === 'zh-CN';
-  const [sourceTabId] = useState<number | null>(() => getSourceTabId());
+  const [sourceTabId, setSourceTabId] = useState<number | null>(() => getSourceTabId());
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [sourceSite, setSourceSite] = useState<SupportedSite>('chatgpt');
   const [activeSite, setActiveSite] = useState<SupportedSite>('chatgpt');
@@ -113,8 +113,50 @@ export function DashboardApp() {
     }
 
     let cancelled = false;
-    const syncFromCache = (cache: ScannedConversationCache | null) => {
+    const consumeCache = (cache: ScannedConversationCache | null) => {
       if (cancelled) return;
+      void syncFromCache(cache, sourceSite);
+    };
+
+    void getScannedConversationCache(sourceTabId).then(consumeCache);
+    const unsubscribe = subscribeScannedConversationCache(sourceTabId, consumeCache);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [sourceSite, sourceTabId]);
+
+  useEffect(() => {
+    if (!sourceTabId) return;
+
+    const handleUpdated = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (tabId !== sourceTabId) return;
+      if (!changeInfo.url && changeInfo.status !== 'complete') return;
+      void refreshPageContext();
+    };
+
+    const handleRemoved = (tabId: number) => {
+      if (tabId !== sourceTabId) return;
+      setSourceTabId(null);
+      setSourceUrl(null);
+      setConversations([]);
+      setSelectedIds([]);
+      setPermissionGranted(false);
+      setScanMessage(translate(language, 'sourceTabMissing'));
+    };
+
+    chrome.tabs.onUpdated.addListener(handleUpdated);
+    chrome.tabs.onRemoved.addListener(handleRemoved);
+    return () => {
+      chrome.tabs.onUpdated.removeListener(handleUpdated);
+      chrome.tabs.onRemoved.removeListener(handleRemoved);
+    };
+  }, [language, sourceTabId]);
+
+  async function syncFromCache(cache: ScannedConversationCache | null, nextSite: SupportedSite) {
+    if (!sourceTabId) return;
+    if (!cache || cache.site === nextSite) {
       const nextConversations = cache?.conversations ?? [];
       setConversations(nextConversations);
       setSelectedIds((current) => {
@@ -122,30 +164,37 @@ export function DashboardApp() {
         if (validCurrent.length > 0 || nextConversations.length === 0) return validCurrent;
         return nextConversations.slice(0, 5).map((item) => item.id);
       });
-    };
+      return;
+    }
 
-    void getScannedConversationCache(sourceTabId).then(syncFromCache);
-    const unsubscribe = subscribeScannedConversationCache(sourceTabId, syncFromCache);
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, [sourceTabId]);
+    await clearScannedConversationCache(sourceTabId);
+    setConversations([]);
+    setSelectedIds([]);
+  }
 
   async function refreshPageContext() {
     if (sourceTabId) {
       const tab = await chrome.tabs.get(sourceTabId);
-      setSourceUrl(tab.url ?? null);
-      const detectedSite = detectSupportedSiteFromUrl(tab.url) ?? 'chatgpt';
+      const nextUrl = tab.url ?? null;
+      const detectedSite = detectSupportedSiteFromUrl(nextUrl) ?? 'chatgpt';
+      setSourceUrl(nextUrl);
       setSourceSite(detectedSite);
       setActiveSite(detectedSite);
-      const permission = await hasSitePermissionForUrl(tab.url);
+      const permission = await hasSitePermissionForUrl(nextUrl);
       setPermissionGranted(permission.granted);
+      const cache = await getScannedConversationCache(sourceTabId);
+      await syncFromCache(cache, detectedSite);
       setScanMessage(translate(language, 'scanPopulate'));
-
     }
     await refreshHistoryAndJobs();
+  }
+
+  async function getCurrentStatus() {
+    if (!sourceTabId) return null;
+    const response = await callRuntime({ type: 'GET_ACTIVE_SITE_STATUS', sourceTabId });
+    if (response.ok && 'status' in response) return response.status;
+    if (!response.ok) throw new Error(response.error);
+    return null;
   }
 
   async function refreshHistoryAndJobs() {
@@ -202,11 +251,34 @@ export function DashboardApp() {
     setBusy(true);
 
     try {
-      if (!(await ensurePermissions())) return;
-      markStep(56, isZh ? '正在抓取当前会话内容...' : 'Capturing current conversation...');
-      const response = await callRuntime({ type: 'EXPORT_CURRENT_CONVERSATION', sourceTabId, format });
+      const status = await getCurrentStatus();
+      const needsFallback = !status?.canExportCurrentConversation;
+      if (!(await ensurePermissions(needsFallback))) return;
+
+      if (!needsFallback) {
+        markStep(56, isZh ? '正在抓取当前会话内容...' : 'Capturing current conversation...');
+        const response = await callRuntime({ type: 'EXPORT_CURRENT_CONVERSATION', sourceTabId, format });
+        if (response.ok && 'conversation' in response) {
+          markStep(92, isZh ? '导出内容已生成，正在落盘...' : 'Export artifact generated. Saving file...');
+          completeProgress(translate(language, 'exportedConversation', { title: response.conversation.title }));
+          await refreshHistoryAndJobs();
+          return;
+        }
+        failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
+        return;
+      }
+
+      const scanned = conversations.length > 0 ? conversations : await scanConversations('default', true);
+      const fallback = scanned[0];
+      if (!fallback) {
+        failProgress(isZh ? '没有找到可回退导出的会话。' : 'No fallback conversation was found.');
+        return;
+      }
+
+      markStep(78, isZh ? `当前页面是新对话，改为导出首条会话：${fallback.title}` : `This is a new-chat page. Exporting the first conversation instead: ${fallback.title}`);
+      const response = await callRuntime({ type: 'EXPORT_CONVERSATION_FROM_SUMMARY', sourceTabId, format, summary: fallback });
       if (response.ok && 'conversation' in response) {
-        markStep(92, isZh ? '导出内容已生成，正在落盘...' : 'Export artifact generated. Saving file...');
+        markStep(94, isZh ? '导出内容已生成，正在落盘...' : 'Export artifact generated. Saving file...');
         completeProgress(translate(language, 'exportedConversation', { title: response.conversation.title }));
         await refreshHistoryAndJobs();
       } else {
@@ -237,6 +309,25 @@ export function DashboardApp() {
     }
   }
 
+  async function scanConversations(kind: 'default' | 'team' = 'default', autoMode = false): Promise<ConversationSummary[]> {
+    if (!sourceTabId) return [];
+    markStep(56, autoMode
+      ? (isZh ? '当前页面不是会话详情，正在改为扫描会话列表...' : 'This page is not a conversation detail view. Scanning the conversation list instead...')
+      : kind === 'team'
+        ? (isZh ? '正在读取 Team 工作空间会话...' : 'Reading Team workspace conversations...')
+        : translate(language, 'scanningConversationList'));
+
+    const response = await callRuntime({ type: 'SCAN_CONVERSATIONS', sourceTabId });
+    if (!(response.ok && 'conversations' in response)) {
+      throw new Error(response.ok ? translate(language, 'unknownScanResponse') : response.error);
+    }
+
+    setConversations(response.conversations);
+    setSelectedIds(response.conversations.slice(0, 5).map((item) => item.id));
+    await setScannedConversationCache(sourceTabId, sourceSite, response.conversations);
+    return response.conversations;
+  }
+
   async function handleScan(kind: 'default' | 'team' = 'default') {
     if (!supportsBatch) return;
     startProgress(kind === 'team' ? (isZh ? '正在准备扫描 ChatGPT Team 工作空间...' : 'Preparing to scan the ChatGPT Team workspace...') : translate(language, 'scanningSidebar'));
@@ -244,18 +335,9 @@ export function DashboardApp() {
 
     try {
       if (!(await ensurePermissions())) return;
-      markStep(56, kind === 'team' ? (isZh ? '正在读取 Team 工作空间会话...' : 'Reading Team workspace conversations...') : translate(language, 'scanningConversationList'));
-
-      const response = await callRuntime({ type: 'SCAN_CONVERSATIONS', sourceTabId });
-      if (response.ok && 'conversations' in response) {
-        setConversations(response.conversations);
-        setSelectedIds(response.conversations.slice(0, 5).map((item) => item.id));
-        await setScannedConversationCache(sourceTabId, sourceSite, response.conversations);
-        markStep(88, isZh ? `已识别 ${response.conversations.length} 个会话。` : `Recognized ${response.conversations.length} conversations.`);
-        completeProgress(kind === 'team' ? (isZh ? `Team 工作空间扫描完成，共找到 ${response.conversations.length} 个会话。` : `Team workspace scan complete. Found ${response.conversations.length} conversations.`) : translate(language, 'foundConversationsPreset', { count: response.conversations.length }));
-      } else {
-        failProgress(response.ok ? translate(language, 'unknownScanResponse') : response.error);
-      }
+      const scanned = await scanConversations(kind, false);
+      markStep(88, isZh ? `已识别 ${scanned.length} 个会话。` : `Recognized ${scanned.length} conversations.`);
+      completeProgress(kind === 'team' ? (isZh ? `Team 工作空间扫描完成，共找到 ${scanned.length} 个会话。` : `Team workspace scan complete. Found ${scanned.length} conversations.`) : translate(language, 'foundConversationsPreset', { count: scanned.length }));
     } catch (scanError) {
       failProgress(scanError instanceof Error ? scanError.message : (isZh ? '扫描失败。' : 'Scan failed.'));
     } finally {
@@ -341,8 +423,8 @@ export function DashboardApp() {
   const sourceSiteLabel = siteOptions.find((site) => site.value === sourceSite)?.label ?? sourceSite;
 
   return (
-    <main className="min-h-screen bg-transparent px-6 py-8 text-ink">
-      <div className="mx-auto max-w-6xl rounded-[36px] border border-white/70 bg-white/85 p-8 shadow-panel backdrop-blur">
+    <main className="min-h-screen overflow-x-hidden bg-transparent px-6 py-8 text-ink">
+      <div className="mx-auto max-w-6xl overflow-hidden rounded-[36px] border border-white/70 bg-white/85 p-8 shadow-panel backdrop-blur">
         <section className="rounded-[28px] bg-[radial-gradient(circle_at_top_left,_rgba(230,126,34,0.22),_transparent_28%),linear-gradient(135deg,_#10233b,_#1e3556)] p-8 text-white">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-start gap-4">
@@ -374,8 +456,8 @@ export function DashboardApp() {
           </div>
         </section>
 
-        <div className="mt-8 grid gap-8 xl:grid-cols-[1.2fr_0.8fr]">
-          <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
+        <div className="mt-8 grid min-w-0 gap-8 xl:grid-cols-[1.2fr_0.8fr]">
+          <section className="min-w-0 rounded-[28px] border border-slate-200 bg-slate-50 p-6">
             {!currentSiteMatches ? (
               <div className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 {isZh ? `当前源标签页是 ${sourceSiteLabel}，不是 ${selectedSiteLabel}。请先切到对应平台页面，再执行导出。` : `The source tab is ${sourceSiteLabel}, not ${selectedSiteLabel}. Switch to a matching page before exporting.`}
@@ -448,7 +530,7 @@ export function DashboardApp() {
                   </div>
                 </div>
 
-                <div className="mt-4 max-h-[440px] overflow-auto rounded-3xl border border-slate-200 bg-white">
+                <div className="mt-4 max-h-[440px] overflow-x-hidden overflow-y-auto rounded-3xl border border-slate-200 bg-white">
                   {conversations.length === 0 ? <div className="px-5 py-10 text-sm text-slate-500">{translate(language, 'noConversationsScanned')}</div> : (
                     <ul className="divide-y divide-slate-200">
                       {conversations.map((item) => {
@@ -473,9 +555,9 @@ export function DashboardApp() {
                 </div>
 
                 <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                  <button type="button" onClick={() => void handleCurrentExport()} disabled={busy || !sourceTabId} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{busy ? translate(language, 'working') : translate(language, 'exportCurrentConversation')}</button>
-                  <button type="button" onClick={() => void handleBatchExport()} disabled={busy || selectedIds.length === 0} className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'exportingBatch') : translate(language, 'exportSelectedConversations')}</button>
-                  <button type="button" onClick={() => void handleBatchExport(conversations)} disabled={busy || conversations.length === 0} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{translate(language, 'exportAllConversations')}</button>
+                  <button type="button" onClick={() => void handleCurrentExport()} disabled={busy || !sourceTabId || !currentSiteMatches} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{busy ? translate(language, 'working') : translate(language, 'exportCurrentConversation')}</button>
+                  <button type="button" onClick={() => void handleBatchExport()} disabled={busy || selectedIds.length === 0 || !currentSiteMatches} className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'exportingBatch') : translate(language, 'exportSelectedConversations')}</button>
+                  <button type="button" onClick={() => void handleBatchExport(conversations)} disabled={busy || conversations.length === 0 || !currentSiteMatches} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{translate(language, 'exportAllConversations')}</button>
                 </div>
               </>
             )}
