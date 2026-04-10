@@ -1,3 +1,19 @@
+const supportedMatches = [
+  'https://chatgpt.com/*',
+  'https://claude.ai/*',
+  'https://gemini.google.com/*',
+  'https://kimi.moonshot.cn/*',
+  'https://chat.deepseek.com/*',
+  'https://grok.com/*',
+  'https://x.com/i/grok*',
+  'https://www.doubao.com/*',
+  'https://doubao.com/*',
+  'https://tongyi.aliyun.com/*',
+  'https://qianwen.aliyun.com/*',
+  'https://yiyan.baidu.com/*',
+  'https://wenxin.baidu.com/*'
+] as const;
+
 export const manifest = {
   manifest_version: 3,
   name: 'AI Chat Exporter',
@@ -19,25 +35,11 @@ export const manifest = {
   },
   permissions: ['storage', 'downloads', 'scripting', 'activeTab'],
   optional_permissions: ['tabs', 'notifications'],
-  optional_host_permissions: [
-    'https://chatgpt.com/*',
-    'https://claude.ai/*',
-    'https://gemini.google.com/*',
-    'https://kimi.moonshot.cn/*',
-    'https://chat.deepseek.com/*',
-    'https://grok.com/*',
-    'https://x.com/i/grok*',
-    'https://www.doubao.com/*',
-    'https://doubao.com/*',
-    'https://tongyi.aliyun.com/*',
-    'https://qianwen.aliyun.com/*',
-    'https://yiyan.baidu.com/*',
-    'https://wenxin.baidu.com/*'
-  ],
+  optional_host_permissions: supportedMatches,
   host_permissions: [],
   content_scripts: [
     {
-      matches: ['https://chatgpt.com/*'],
+      matches: supportedMatches,
       js: ['src/content/index.js'],
       run_at: 'document_idle'
     }
@@ -56,4 +58,3 @@ export const manifest = {
     }
   }
 } as const;
-

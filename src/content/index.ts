@@ -1,6 +1,5 @@
 import { createChatGptAdapter } from '../adapters/chatgpt';
 import { createGenericSiteAdapter } from '../adapters/generic';
-import { detectSupportedSiteFromUrl } from '../background/permissions';
 import { createLogger } from '../core/logger';
 
 const logger = createLogger('content');
@@ -10,6 +9,25 @@ const FLOATING_FRAME_ID = 'ai-chat-exporter-floating-frame';
 type ContentErrorResponse = { __contentError: string };
 
 type ToggleResponse = { ok: true; open: boolean };
+
+function detectSupportedSiteFromUrl(url?: string | null) {
+  if (!url) return null;
+  try {
+    const hostname = new URL(url).hostname;
+    if (hostname.includes('chatgpt.com')) return 'chatgpt';
+    if (hostname.includes('claude.ai')) return 'claude';
+    if (hostname.includes('gemini.google.com')) return 'gemini';
+    if (hostname.includes('kimi.moonshot.cn')) return 'kimi';
+    if (hostname.includes('chat.deepseek.com')) return 'deepseek';
+    if (hostname.includes('grok.com') || hostname.includes('x.com')) return 'grok';
+    if (hostname.includes('doubao.com')) return 'doubao';
+    if (hostname.includes('tongyi.aliyun.com') || hostname.includes('qianwen.aliyun.com')) return 'qianwen';
+    if (hostname.includes('yiyan.baidu.com') || hostname.includes('wenxin.baidu.com')) return 'yiyan';
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 function getAdapter() {
   const site = detectSupportedSiteFromUrl(globalThis.location.href);
