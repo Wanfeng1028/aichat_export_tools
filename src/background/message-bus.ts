@@ -18,6 +18,7 @@ export type RuntimeRequest =
   | { type: 'SCAN_CONVERSATIONS'; sourceTabId: number }
   | { type: 'PREVIEW_CURRENT_CONVERSATION'; sourceTabId?: number }
   | { type: 'EXPORT_CURRENT_CONVERSATION'; format: ExportFormat; sourceTabId?: number }
+  | { type: 'EXPORT_CONVERSATION_FROM_SUMMARY'; sourceTabId: number; format: ExportFormat; summary: ConversationSummary }
   | { type: 'EXPORT_SELECTED_CONVERSATIONS'; sourceTabId: number; format: ExportFormat; conversations: ConversationSummary[] }
   | { type: 'LIST_EXPORT_HISTORY' }
   | { type: 'LIST_EXPORT_JOBS' }
@@ -184,11 +185,12 @@ async function exportConversationFromUrl(url: string): Promise<ChatConversation>
   }
 }
 
-async function exportCurrentConversationFlow(format: ExportFormat, sourceTabId?: number): Promise<ChatConversation> {
-  const conversation = await requestCurrentConversation(sourceTabId);
-  const job = createJobRecord(conversation, format);
+async function saveConversationFlow(conversation: ChatConversation, format: ExportFormat, jobSeed?: { id: string; site: ChatConversation['site']; title: string }): Promise<ChatConversation> {
+  const seed = jobSeed ?? { id: conversation.id, site: conversation.site, title: conversation.title };
+  const job = createJobRecord({ ...seed, exportedAt: conversation.exportedAt }, format);
   await upsertJobRecord(job);
   await updateJobStatus(job.id, 'running');
+
   try {
     const artifact = await exportConversation(conversation, format);
     const download = await downloadArtifact(artifact);
@@ -199,6 +201,17 @@ async function exportCurrentConversationFlow(format: ExportFormat, sourceTabId?:
     await updateJobStatus(job.id, 'failed', error instanceof Error ? error.message : 'Unexpected export error');
     throw error;
   }
+}
+
+async function exportCurrentConversationFlow(format: ExportFormat, sourceTabId?: number): Promise<ChatConversation> {
+  const conversation = await requestCurrentConversation(sourceTabId);
+  return saveConversationFlow(conversation, format);
+}
+
+async function exportConversationSummaryFlow(format: ExportFormat, summary: ConversationSummary): Promise<ChatConversation> {
+  await ensureTabsPermission();
+  const conversation = await exportConversationFromUrl(summary.url);
+  return saveConversationFlow(conversation, format, { id: summary.id, site: summary.site, title: summary.title });
 }
 
 async function exportSelectedConversationsFlow(sourceTabId: number, format: ExportFormat, conversations: ConversationSummary[]): Promise<BatchExportResult> {
@@ -287,6 +300,7 @@ export async function handleRuntimeRequest(request: RuntimeRequest): Promise<Run
     if (request.type === 'SCAN_CONVERSATIONS') return { ok: true, conversations: await requestConversationScan(request.sourceTabId) };
     if (request.type === 'PREVIEW_CURRENT_CONVERSATION') return { ok: true, conversation: await requestCurrentConversation(request.sourceTabId) };
     if (request.type === 'EXPORT_CURRENT_CONVERSATION') return { ok: true, conversation: await exportCurrentConversationFlow(request.format, request.sourceTabId) };
+    if (request.type === 'EXPORT_CONVERSATION_FROM_SUMMARY') return { ok: true, conversation: await exportConversationSummaryFlow(request.format, request.summary) };
     if (request.type === 'EXPORT_SELECTED_CONVERSATIONS') return { ok: true, batch: await exportSelectedConversationsFlow(request.sourceTabId, request.format, request.conversations) };
     if (request.type === 'LIST_EXPORT_HISTORY') return { ok: true, history: await listHistoryRecords() };
     if (request.type === 'LIST_EXPORT_JOBS') return { ok: true, jobs: await listJobRecords() };

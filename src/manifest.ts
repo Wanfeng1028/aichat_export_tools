@@ -3,6 +3,8 @@ const supportedMatches = [
   'https://claude.ai/*',
   'https://gemini.google.com/*',
   'https://kimi.moonshot.cn/*',
+  'https://kimi.com/*',
+  'https://www.kimi.com/*',
   'https://chat.deepseek.com/*',
   'https://grok.com/*',
   'https://x.com/i/grok*',
@@ -10,6 +12,10 @@ const supportedMatches = [
   'https://doubao.com/*',
   'https://tongyi.aliyun.com/*',
   'https://qianwen.aliyun.com/*',
+  'https://tongyi.com/*',
+  'https://www.tongyi.com/*',
+  'https://qwen.ai/*',
+  'https://www.qwen.ai/*',
   'https://yiyan.baidu.com/*',
   'https://wenxin.baidu.com/*'
 ] as const;

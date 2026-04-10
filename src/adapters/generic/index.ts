@@ -9,6 +9,10 @@ type GenericSiteConfig = {
   titleSelectors?: string[];
   messageSelectors?: string[];
   sidebarSelectors?: string[];
+  conversationPathHints?: string[];
+  blockedPathTokens?: string[];
+  blockedTextTokens?: string[];
+  requirePathHint?: boolean;
 };
 
 const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
@@ -17,56 +21,67 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     label: 'Claude',
     hostnames: ['claude.ai'],
     titleSelectors: ['h1', 'main h2', 'main header h2'],
-    messageSelectors: ['[data-testid*="message"]', '[class*="message"]', 'article']
+    messageSelectors: ['[data-testid*="message"]', '[class*="message"]', 'article'],
+    conversationPathHints: ['/chat/']
   },
   {
     site: 'gemini',
     label: 'Gemini',
     hostnames: ['gemini.google.com'],
     titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['message-content', 'user-query', 'model-response', '[class*="message"]']
+    messageSelectors: ['message-content', 'user-query', 'model-response', '[class*="message"]'],
+    conversationPathHints: ['/app/', '/share/'],
+    blockedPathTokens: ['/mystuff', '/notebooks', '/gems', '/library'],
+    blockedTextTokens: ['my stuff', 'notebooks', 'gems', 'library'],
+    requirePathHint: true
   },
   {
     site: 'kimi',
     label: 'Kimi',
-    hostnames: ['kimi.moonshot.cn'],
+    hostnames: ['kimi.moonshot.cn', 'kimi.com', 'www.kimi.com'],
     titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article']
+    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
+    conversationPathHints: ['/chat/']
   },
   {
     site: 'deepseek',
     label: 'DeepSeek',
     hostnames: ['chat.deepseek.com'],
     titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article']
+    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
+    conversationPathHints: ['/chat/', '/a/chat/']
   },
   {
     site: 'grok',
     label: 'Grok',
     hostnames: ['grok.com', 'x.com'],
     titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[data-testid*="conversation"] [data-testid*="cellInnerDiv"]', '[class*="message"]', 'article']
+    messageSelectors: ['[data-testid*="conversation"] [data-testid*="cellInnerDiv"]', '[class*="message"]', 'article'],
+    conversationPathHints: ['/c/', '/i/grok']
   },
   {
     site: 'doubao',
     label: '豆包',
     hostnames: ['doubao.com', 'www.doubao.com'],
     titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article']
+    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
+    conversationPathHints: ['/chat/']
   },
   {
     site: 'qianwen',
     label: '千问',
-    hostnames: ['tongyi.aliyun.com', 'qianwen.aliyun.com'],
+    hostnames: ['tongyi.aliyun.com', 'qianwen.aliyun.com', 'tongyi.com', 'www.tongyi.com', 'qwen.ai', 'www.qwen.ai'],
     titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article']
+    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
+    conversationPathHints: ['/chat/', '/c/', '/share/']
   },
   {
     site: 'yiyan',
     label: '文心一言',
     hostnames: ['yiyan.baidu.com', 'wenxin.baidu.com'],
     titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article']
+    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
+    conversationPathHints: ['/chat/']
   }
 ];
 
@@ -98,6 +113,49 @@ const MESSAGE_ROLE_HINTS: Record<MessageRole, string[]> = {
   assistant: ['assistant', 'bot', 'model', 'claude', 'gemini', 'kimi', 'deepseek', 'grok', 'doubao', 'qwen', 'wenxin', 'yiyan'],
   tool: ['tool']
 };
+
+const DEFAULT_BLOCKED_TEXT_TOKENS = [
+  'new chat',
+  'new conversation',
+  'settings',
+  'upgrade',
+  'pricing',
+  'help',
+  'team',
+  'workspace',
+  'explore',
+  'discover',
+  'history',
+  'search',
+  'my stuff',
+  'notebook',
+  'notebooks',
+  'gems',
+  'library',
+  '新对话',
+  '新建对话',
+  '设置',
+  '帮助',
+  '团队',
+  '工作空间',
+  '发现',
+  '探索',
+  '更多'
+];
+
+const DEFAULT_BLOCKED_PATH_TOKENS = [
+  '/settings',
+  '/help',
+  '/pricing',
+  '/upgrade',
+  '/workspace',
+  '/explore',
+  '/discover',
+  '/mystuff',
+  '/notebooks',
+  '/gems',
+  '/library'
+];
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -166,7 +224,7 @@ function resolveConversationTitle(config: GenericSiteConfig): string {
   const explicitTitle = textFromNode(document.querySelector('main h1, header h1, h1'));
   if (explicitTitle) return explicitTitle;
 
-  const browserTitle = document.title.replace(/\s*[\-|·|•].*$/, '').trim();
+  const browserTitle = document.title.replace(/\s*[\-|·|?].*$/, '').trim();
   return browserTitle || `${config.label} conversation`;
 }
 
@@ -182,16 +240,15 @@ function collectMessageCandidates(root: Element, config: GenericSiteConfig): Ele
 function fallbackConversationMessages(root: Element): ChatMessage[] {
   const sections = Array.from(root.querySelectorAll('main p, article p, [role="main"] p'))
     .map((element) => normalizeMessageText(textFromNode(element)))
-    .filter((text) => text.length >= 8);
+    .filter((text) => text.length >= 20);
 
-  if (sections.length === 0) {
-    const text = normalizeMessageText(textFromNode(root));
-    return text ? [{ id: 'msg-1', role: 'assistant', text }] : [];
+  if (sections.length < 2) {
+    return [];
   }
 
   return sections.map((text, index) => ({
     id: `msg-${index + 1}`,
-    role: index === 0 ? 'assistant' : index % 2 === 0 ? 'assistant' : 'user',
+    role: index % 2 === 0 ? 'assistant' : 'user',
     text
   }));
 }
@@ -222,30 +279,45 @@ function getSummaryIdFromUrl(url: URL): string {
   return parts.at(-1) || url.href;
 }
 
-function shouldKeepConversationLink(anchor: HTMLAnchorElement): boolean {
+function shouldKeepConversationLink(anchor: HTMLAnchorElement, config: GenericSiteConfig): boolean {
   const text = textFromNode(anchor);
   if (text.length < 2) return false;
   const href = anchor.href;
   if (!href || href.startsWith('javascript:')) return false;
 
-  const lower = `${text} ${anchor.pathname}`.toLowerCase();
-  const blockedTokens = ['new chat', 'new conversation', 'settings', 'upgrade', 'pricing', 'help', 'team', 'workspace', 'explore', 'discover'];
-  return !blockedTokens.some((token) => lower.includes(token));
+  let url: URL;
+  try {
+    url = new URL(anchor.href, globalThis.location.href);
+  } catch {
+    return false;
+  }
+
+  if (url.origin !== globalThis.location.origin) return false;
+
+  const combined = `${text} ${url.pathname}`.toLowerCase();
+  const blockedTextTokens = [...DEFAULT_BLOCKED_TEXT_TOKENS, ...(config.blockedTextTokens ?? [])];
+  const blockedPathTokens = [...DEFAULT_BLOCKED_PATH_TOKENS, ...(config.blockedPathTokens ?? [])];
+  if (blockedTextTokens.some((token) => combined.includes(token))) return false;
+  if (blockedPathTokens.some((token) => url.pathname.toLowerCase().includes(token))) return false;
+
+  const pathHints = config.conversationPathHints ?? [];
+  if (config.requirePathHint && !pathHints.some((hint) => url.pathname.toLowerCase().includes(hint.toLowerCase()) || url.href.toLowerCase().includes(hint.toLowerCase()))) {
+    return false;
+  }
+
+  const looksLikeConversation = pathHints.some((hint) => url.pathname.toLowerCase().includes(hint.toLowerCase()) || url.href.toLowerCase().includes(hint.toLowerCase()));
+  if (!looksLikeConversation && url.pathname.split('/').filter(Boolean).length < 2) {
+    return false;
+  }
+
+  return true;
 }
 
 function buildConversationSummaries(config: GenericSiteConfig): ConversationSummary[] {
   const roots = Array.from(document.querySelectorAll([...(config.sidebarSelectors ?? []), GENERIC_SIDEBAR_SELECTOR].join(', ')));
   const anchors = roots.flatMap((root) => Array.from(root.querySelectorAll('a')))
     .filter((anchor): anchor is HTMLAnchorElement => anchor instanceof HTMLAnchorElement)
-    .filter((anchor) => shouldKeepConversationLink(anchor))
-    .filter((anchor) => {
-      try {
-        const url = new URL(anchor.href, globalThis.location.href);
-        return url.origin === globalThis.location.origin;
-      } catch {
-        return false;
-      }
-    });
+    .filter((anchor) => shouldKeepConversationLink(anchor, config));
 
   const seen = new Set<string>();
   const activePath = globalThis.location.pathname;
@@ -253,16 +325,22 @@ function buildConversationSummaries(config: GenericSiteConfig): ConversationSumm
   return anchors.map((anchor) => {
     const url = new URL(anchor.href, globalThis.location.href);
     const id = getSummaryIdFromUrl(url);
-    if (!id || seen.has(id)) return null;
+    const title = textFromNode(anchor);
+    if (!id || !title || seen.has(id)) return null;
     seen.add(id);
     return {
       id,
       site: config.site,
-      title: textFromNode(anchor),
+      title,
       url: url.toString(),
       isActive: url.pathname === activePath
     } satisfies ConversationSummary;
   }).filter((item): item is ConversationSummary => Boolean(item));
+}
+
+function hasReadableConversation(root: Element | null, config: GenericSiteConfig): boolean {
+  if (!root) return false;
+  return buildMessages(root, config).length > 0;
 }
 
 export class GenericDomAdapter extends BaseAdapter {
@@ -275,7 +353,7 @@ export class GenericDomAdapter extends BaseAdapter {
 
   async getStatus(): Promise<AdapterStatus> {
     const root = selectConversationRoot();
-    const canExport = Boolean(root && textFromNode(root).length > 20);
+    const canExport = hasReadableConversation(root, this.config);
 
     return {
       site: this.site,

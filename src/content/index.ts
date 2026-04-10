@@ -17,11 +17,11 @@ function detectSupportedSiteFromUrl(url?: string | null) {
     if (hostname.includes('chatgpt.com')) return 'chatgpt';
     if (hostname.includes('claude.ai')) return 'claude';
     if (hostname.includes('gemini.google.com')) return 'gemini';
-    if (hostname.includes('kimi.moonshot.cn')) return 'kimi';
+    if (hostname.includes('kimi.moonshot.cn') || hostname === 'kimi.com' || hostname === 'www.kimi.com') return 'kimi';
     if (hostname.includes('chat.deepseek.com')) return 'deepseek';
     if (hostname.includes('grok.com') || hostname.includes('x.com')) return 'grok';
     if (hostname.includes('doubao.com')) return 'doubao';
-    if (hostname.includes('tongyi.aliyun.com') || hostname.includes('qianwen.aliyun.com')) return 'qianwen';
+    if (hostname.includes('tongyi.aliyun.com') || hostname.includes('qianwen.aliyun.com') || hostname === 'tongyi.com' || hostname === 'www.tongyi.com' || hostname === 'qwen.ai' || hostname === 'www.qwen.ai') return 'qianwen';
     if (hostname.includes('yiyan.baidu.com') || hostname.includes('wenxin.baidu.com')) return 'yiyan';
     return null;
   } catch {

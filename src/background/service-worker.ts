@@ -1,5 +1,27 @@
 import { handleRuntimeRequest } from './message-bus';
-import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestSitePermission } from './permissions';
+import { detectSupportedSiteFromUrl } from './permissions';
+
+function getPopupUrl(sourceTabId: number): string {
+  const url = new URL(chrome.runtime.getURL('src/ui/popup/index.html'));
+  url.searchParams.set('sourceTabId', String(sourceTabId));
+  return url.toString();
+}
+
+async function openStandalonePopup(tabId: number): Promise<void> {
+  const url = getPopupUrl(tabId);
+
+  try {
+    await chrome.windows.create({
+      url,
+      type: 'popup',
+      width: 540,
+      height: 920,
+      focused: true
+    });
+  } catch {
+    await chrome.tabs.create({ url });
+  }
+}
 
 async function injectContentScript(tabId: number): Promise<void> {
   await chrome.scripting.executeScript({
@@ -8,29 +30,20 @@ async function injectContentScript(tabId: number): Promise<void> {
   });
 }
 
-async function ensureSitePermissionForTab(tab: chrome.tabs.Tab): Promise<void> {
-  const site = detectSupportedSiteFromUrl(tab.url);
-  if (!site) {
-    return;
-  }
-
-  const permission = await hasSitePermissionForUrl(tab.url);
-  if (permission.granted) {
-    return;
-  }
-
-  const granted = await requestSitePermission(site);
-  if (!granted) {
-    throw new Error(`Permission for ${site} was not granted.`);
-  }
-}
-
 async function toggleFloatingPanel(tab: chrome.tabs.Tab): Promise<void> {
   if (!tab.id) {
     return;
   }
 
-  await ensureSitePermissionForTab(tab);
+  const site = detectSupportedSiteFromUrl(tab.url);
+  if (!site) {
+    return;
+  }
+
+  if (site !== 'chatgpt') {
+    await openStandalonePopup(tab.id);
+    return;
+  }
 
   try {
     await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_FLOATING_PANEL', sourceTabId: tab.id });

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ChatConversation, ConversationSummary, ExportFormat, SupportedSite } from '../../core/types';
 import type { RuntimeResponse } from '../../background/message-bus';
-import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestSitePermissionForUrl, requestTabsPermission } from '../../background/permissions';
+import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestPermissionsForUrl } from '../../background/permissions';
 import { languageOptions, translate } from '../shared/i18n';
 import { useLanguage } from '../shared/hooks/useLanguage';
 import { getSettings } from '../../storage/settings';
+import { getScannedConversationCache, setScannedConversationCache, subscribeScannedConversationCache } from '../../storage/scanned-conversations';
 
 const exportFormats: Array<{ value: ExportFormat; label: string; hintKey: 'markdownHint' | 'pdfHint' | 'docxHint' | 'zipHint' }> = [
   { value: 'markdown', label: 'Markdown', hintKey: 'markdownHint' },
@@ -50,6 +51,7 @@ export function PopupApp() {
   const isZh = language === 'zh-CN';
   const popupParams = getPopupParams();
   const [sourceTabId, setSourceTabId] = useState<number | null>(popupParams.sourceTabId);
+  const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [sourceSite, setSourceSite] = useState<SupportedSite>('chatgpt');
   const [activeSite, setActiveSite] = useState<SupportedSite>('chatgpt');
   const [busy, setBusy] = useState(false);
@@ -62,7 +64,8 @@ export function PopupApp() {
   const [_previewConversation, setPreviewConversation] = useState<ChatConversation | null>(null);
 
   const currentSiteMatches = activeSite === sourceSite;
-  const supportsBatch = currentSiteMatches && activeSite === 'chatgpt';
+  const supportsBatch = currentSiteMatches;
+  const supportsTeamWorkspace = currentSiteMatches && activeSite === 'chatgpt';
 
   function pushLog(text: string, level: PopupLogItem['level'] = 'info') {
     setLogs((current) => [{ id: `${Date.now()}-${current.length}`, text, level }, ...current].slice(0, 12));
@@ -108,11 +111,13 @@ export function PopupApp() {
     const tabId = await resolveSourceTab();
     if (!tabId) {
       setStatusText(translate(language, 'noActiveSiteTab'));
+      setSourceUrl(null);
       setPermissionGranted(false);
       return;
     }
 
     const tab = await chrome.tabs.get(tabId);
+    setSourceUrl(tab.url ?? null);
     const detectedSite = detectSupportedSiteFromUrl(tab.url) ?? 'chatgpt';
     setSourceSite(detectedSite);
     setActiveSite(detectedSite);
@@ -142,6 +147,29 @@ export function PopupApp() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (!sourceTabId) {
+      setConversations([]);
+      return;
+    }
+
+    let cancelled = false;
+    void getScannedConversationCache(sourceTabId).then((cache) => {
+      if (cancelled) return;
+      setConversations(cache?.conversations ?? []);
+    });
+
+    const unsubscribe = subscribeScannedConversationCache(sourceTabId, (cache) => {
+      if (cancelled) return;
+      setConversations(cache?.conversations ?? []);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [sourceTabId]);
+
   const conversationCountLabel = useMemo(() => {
     if (!currentSiteMatches) {
       return isZh ? '等待切换源标签页' : 'Waiting for matching tab';
@@ -154,47 +182,33 @@ export function PopupApp() {
   }, [conversations, currentSiteMatches, language, supportsBatch, isZh]);
 
   async function ensureSitePermission(needTabs = false) {
-    if (!sourceTabId) {
+    if (!sourceTabId || !sourceUrl) {
       failProgress(translate(language, 'noActiveSiteTab'));
       return false;
     }
 
     markStep(14, isZh ? '正在检查站点权限...' : 'Checking site permission...');
-    const tab = await chrome.tabs.get(sourceTabId);
-    const currentPermission = await hasSitePermissionForUrl(tab.url);
-    if (!currentPermission.granted) {
-      markStep(22, isZh ? '正在申请当前站点权限...' : 'Requesting current site permission...');
-      const requested = await requestSitePermissionForUrl(tab.url);
+    if (!permissionGranted || needTabs) {
+      markStep(22, needTabs ? (isZh ? '正在申请站点和批量导出权限...' : 'Requesting site and batch export permissions...') : (isZh ? '正在申请当前站点权限...' : 'Requesting current site permission...'));
+      const requested = await requestPermissionsForUrl(sourceUrl, { tabs: needTabs });
       setPermissionGranted(requested.granted);
       if (!requested.granted) {
-        failProgress(isZh ? '当前站点权限未授权，流程已停止。' : 'Current site permission was not granted. The flow stopped.');
+        failProgress(needTabs ? (isZh ? '当前流程需要站点与 tabs 权限，授权未完成。' : 'This flow needs site and tabs permissions, but the request was not granted.') : (isZh ? '当前站点权限未授权，流程已停止。' : 'Current site permission was not granted. The flow stopped.'));
         return false;
       }
     }
 
     setPermissionGranted(true);
-    markStep(30, isZh ? '站点权限已确认。' : 'Site permission confirmed.');
-
-    if (needTabs) {
-      markStep(38, isZh ? '正在检查批量导出权限...' : 'Checking batch export permission...');
-      const tabsGranted = await requestTabsPermission();
-      if (!tabsGranted) {
-        failProgress(isZh ? '批量导出需要 tabs 权限。' : 'Batch export needs tabs permission.');
-        return false;
-      }
-      markStep(46, isZh ? '批量导出权限已确认。' : 'Batch export permission confirmed.');
-    }
-
+    markStep(needTabs ? 46 : 30, needTabs ? (isZh ? '站点和批量导出权限已确认。' : 'Site and batch export permissions confirmed.') : (isZh ? '站点权限已确认。' : 'Site permission confirmed.'));
     return true;
   }
 
   async function handleGrantPermission() {
-    if (!sourceTabId || !currentSiteMatches) return;
+    if (!sourceTabId || !sourceUrl || !currentSiteMatches) return;
     startProgress(isZh ? '正在申请当前站点权限...' : 'Requesting current site permission...');
     setBusy(true);
     try {
-      const tab = await chrome.tabs.get(sourceTabId);
-      const permission = await requestSitePermissionForUrl(tab.url);
+      const permission = await requestPermissionsForUrl(sourceUrl);
       setPermissionGranted(permission.granted);
       if (permission.granted) {
         completeProgress(isZh ? '当前站点权限已授权。' : 'Current site permission granted.');
@@ -237,10 +251,12 @@ export function PopupApp() {
     setBusy(true);
     try {
       if (!(await ensureSitePermission())) return;
-      markStep(52, isZh ? '正在读取 ChatGPT 侧边栏会话...' : 'Reading ChatGPT sidebar conversations...');
+      markStep(52, translate(language, 'scanningConversationList'));
+
       const response = await callRuntime({ type: 'SCAN_CONVERSATIONS', sourceTabId });
       if (response.ok && 'conversations' in response) {
         setConversations(response.conversations);
+        await setScannedConversationCache(sourceTabId, sourceSite, response.conversations);
         markStep(88, isZh ? `已识别 ${response.conversations.length} 个会话。` : `Recognized ${response.conversations.length} conversations.`);
         completeProgress(translate(language, 'scanCompleteFound', { count: response.conversations.length }));
       } else {
@@ -268,6 +284,7 @@ export function PopupApp() {
           return;
         }
         setConversations(scanResponse.conversations);
+        await setScannedConversationCache(sourceTabId, sourceSite, scanResponse.conversations);
         selected = scanResponse.conversations;
       }
 
@@ -341,7 +358,7 @@ export function PopupApp() {
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-xs uppercase tracking-[0.24em] text-tide">{translate(language, 'conversationList')}</div>
               <div className="mt-2 text-lg font-semibold">{conversationCountLabel}</div>
-              <div className="mt-2 text-sm text-slate-500">{!currentSiteMatches ? (isZh ? '能力面板已切换，但执行会跟随当前源标签页。' : 'The capability tab changed, but execution still follows the current source tab.') : supportsBatch ? translate(language, 'sidebarTip') : (isZh ? '当前平台先开放当前会话导出，批量扫描稍后补齐。' : 'This platform supports current conversation export first. Batch scanning comes later.')}</div>
+              <div className="mt-2 text-sm text-slate-500">{!currentSiteMatches ? (isZh ? '能力面板已切换，但执行会跟随当前源标签页。' : 'The capability tab changed, but execution still follows the current source tab.') : translate(language, 'sidebarTip')}</div>
             </div>
           </div>
 
@@ -373,7 +390,7 @@ export function PopupApp() {
           </div>
 
           <div className="mt-5 grid gap-3">
-            {exportFormats.filter((item) => supportsBatch || item.value !== 'zip').map((item) => (
+            {exportFormats.map((item) => (
               <button key={item.value} type="button" onClick={() => setFormat(item.value)} className={`rounded-2xl border px-4 py-3 text-left transition ${format === item.value ? 'border-ink bg-ink text-white' : 'border-slate-200 bg-white text-slate-800 hover:border-slate-400'}`}>
                 <div className="text-sm font-medium">{item.label === 'ZIP' ? translate(language, 'bundle') : item.label}</div>
                 <div className={`mt-1 text-xs ${format === item.value ? 'text-slate-200' : 'text-slate-500'}`}>{translate(language, item.hintKey)}</div>
@@ -381,18 +398,12 @@ export function PopupApp() {
             ))}
           </div>
 
-          {currentSiteMatches && !supportsBatch ? (
-            <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-              {isZh ? '当前平台已接入当前会话导出。侧边栏扫描和批量导出仍保持 ChatGPT 专用，避免误抓取。' : 'Current conversation export is enabled for this platform. Sidebar scanning and batch export remain ChatGPT-only to avoid bad captures.'}
-            </div>
-          ) : null}
-
           <div className="mt-5 grid gap-3">
             <button type="button" onClick={() => void handleExportCurrent()} disabled={busy || !sourceTabId || !currentSiteMatches} className="rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'working') : translate(language, 'exportCurrentConversation')}</button>
             {supportsBatch ? (
               <>
                 <button type="button" onClick={() => void handleScan()} disabled={busy || !sourceTabId} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{translate(language, 'scanConversationList')}</button>
-                <button type="button" onClick={() => void handleExportAll()} disabled={busy || !sourceTabId} className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-300">{isZh ? '导出全部会话' : 'Export all conversations'}</button>
+                <button type="button" onClick={() => void handleExportAll()} disabled={busy || !sourceTabId} className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-300">{translate(language, 'exportAllConversations')}</button>
               </>
             ) : null}
             <button type="button" onClick={() => void openDashboard()} className="rounded-2xl border border-transparent bg-amber-100 px-4 py-3 text-sm font-medium text-amber-900 transition hover:bg-amber-200">{translate(language, 'openFullDashboard')}</button>
