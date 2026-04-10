@@ -390,15 +390,7 @@ export class GenericDomAdapter extends BaseAdapter {
   }
 
   async scanConversationList(): Promise<ConversationSummary[]> {
-    let conversations = buildConversationSummaries(this.config);
-
-    for (let attempt = 0; attempt < 3 && conversations.length === 0; attempt += 1) {
-      await delay(350 + attempt * 200);
-      conversations = buildConversationSummaries(this.config);
-    }
-
-    this.ensure(conversations.length > 0, `${this.config.label} conversation list is not available on this page yet.`);
-    return conversations;
+    throw new Error(`${this.config.label} conversation list scanning is not supported yet. Current MVP batch scanning is only available for ChatGPT.`);
   }
 }
 
@@ -407,3 +399,4 @@ export function createGenericSiteAdapter(site: SupportedSite): GenericDomAdapter
   const config = GENERIC_SITE_CONFIGS.find((item) => item.site === site);
   return config ? new GenericDomAdapter(config) : null;
 }
+

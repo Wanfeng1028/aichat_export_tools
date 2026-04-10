@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ConversationSummary, ExportFormat, ExportHistoryRecord, ExportJobRecord, SupportedSite } from '../../core/types';
 import type { RuntimeResponse } from '../../background/message-bus';
-import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestPermissionsForUrl } from '../../background/permissions';
+import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, hasTabsPermission, requestPermissionsForUrl } from '../../background/permissions';
 import { languageOptions, translate } from '../shared/i18n';
 import { useLanguage } from '../shared/hooks/useLanguage';
 import { clearScannedConversationCache, getScannedConversationCache, type ScannedConversationCache, setScannedConversationCache, subscribeScannedConversationCache } from '../../storage/scanned-conversations';
@@ -67,7 +67,7 @@ export function DashboardApp() {
   const [logs, setLogs] = useState<DashboardLogItem[]>([]);
 
   const currentSiteMatches = activeSite === sourceSite;
-  const supportsBatch = currentSiteMatches;
+  const supportsBatch = currentSiteMatches && activeSite === 'chatgpt';
   const supportsTeamWorkspace = currentSiteMatches && activeSite === 'chatgpt';
 
   function pushLog(text: string, level: DashboardLogItem['level'] = 'info') {
@@ -209,15 +209,18 @@ export function DashboardApp() {
       return false;
     }
 
+    const tabsGranted = needTabs ? await hasTabsPermission() : true;
+    if (permissionGranted && tabsGranted) {
+      return true;
+    }
+
     markStep(14, isZh ? '正在检查当前站点权限...' : 'Checking current site permission...');
-    if (!permissionGranted || needTabs) {
-      markStep(22, needTabs ? (isZh ? '正在申请站点和批量导出权限...' : 'Requesting site and batch export permissions...') : (isZh ? '正在申请当前站点权限...' : 'Requesting current site permission...'));
-      const requested = await requestPermissionsForUrl(sourceUrl, { tabs: needTabs });
-      setPermissionGranted(requested.granted);
-      if (!requested.granted) {
-        failProgress(needTabs ? (isZh ? '当前流程需要站点与 tabs 权限，授权未完成。' : 'This flow needs site and tabs permissions, but the request was not granted.') : (isZh ? '当前站点权限未授权，流程已停止。' : 'Current site permission was not granted. The flow stopped.'));
-        return false;
-      }
+    markStep(22, needTabs ? (isZh ? '正在申请站点和批量导出权限...' : 'Requesting site and batch export permissions...') : (isZh ? '正在申请当前站点权限...' : 'Requesting current site permission...'));
+    const requested = await requestPermissionsForUrl(sourceUrl, { tabs: needTabs });
+    setPermissionGranted(requested.granted);
+    if (!requested.granted) {
+      failProgress(needTabs ? (isZh ? '当前流程需要站点与 tabs 权限，授权未完成。' : 'This flow needs site and tabs permissions, but the request was not granted.') : (isZh ? '当前站点权限未授权，流程已停止。' : 'Current site permission was not granted. The flow stopped.'));
+      return false;
     }
 
     setPermissionGranted(true);
@@ -265,6 +268,11 @@ export function DashboardApp() {
           return;
         }
         failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
+        return;
+      }
+
+      if (!supportsBatch) {
+        failProgress(isZh ? '当前页面无法直接导出，且当前站点暂不支持会话列表回退导出。' : 'The current page cannot be exported directly, and conversation-list fallback export is not supported for this site yet.');
         return;
       }
 
@@ -610,3 +618,4 @@ export function DashboardApp() {
     </main>
   );
 }
+
