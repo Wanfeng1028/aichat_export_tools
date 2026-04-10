@@ -1,4 +1,6 @@
 import { createChatGptAdapter } from '../adapters/chatgpt';
+import { createGenericSiteAdapter } from '../adapters/generic';
+import { detectSupportedSiteFromUrl } from '../background/permissions';
 import { createLogger } from '../core/logger';
 
 const logger = createLogger('content');
@@ -10,11 +12,13 @@ type ContentErrorResponse = { __contentError: string };
 type ToggleResponse = { ok: true; open: boolean };
 
 function getAdapter() {
-  if (globalThis.location.hostname.includes('chatgpt.com')) {
+  const site = detectSupportedSiteFromUrl(globalThis.location.href);
+
+  if (site === 'chatgpt') {
     return createChatGptAdapter();
   }
 
-  return null;
+  return site ? createGenericSiteAdapter(site) : null;
 }
 
 function toErrorResponse(error: unknown): ContentErrorResponse {
@@ -196,7 +200,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
   if (!adapter) {
     sendResponse({
-      site: 'chatgpt',
+      site: detectSupportedSiteFromUrl(globalThis.location.href) ?? 'chatgpt',
       supported: false,
       loggedIn: false,
       canExportCurrentConversation: false,
@@ -239,6 +243,3 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 });
 
 logger.info('Content script loaded.');
-
-
-

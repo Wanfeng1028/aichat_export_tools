@@ -50,6 +50,7 @@ export function PopupApp() {
   const isZh = language === 'zh-CN';
   const popupParams = getPopupParams();
   const [sourceTabId, setSourceTabId] = useState<number | null>(popupParams.sourceTabId);
+  const [sourceSite, setSourceSite] = useState<SupportedSite>('chatgpt');
   const [activeSite, setActiveSite] = useState<SupportedSite>('chatgpt');
   const [busy, setBusy] = useState(false);
   const [statusText, setStatusText] = useState('');
@@ -59,6 +60,9 @@ export function PopupApp() {
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [logs, setLogs] = useState<PopupLogItem[]>([]);
   const [_previewConversation, setPreviewConversation] = useState<ChatConversation | null>(null);
+
+  const currentSiteMatches = activeSite === sourceSite;
+  const supportsBatch = currentSiteMatches && activeSite === 'chatgpt';
 
   function pushLog(text: string, level: PopupLogItem['level'] = 'info') {
     setLogs((current) => [{ id: `${Date.now()}-${current.length}`, text, level }, ...current].slice(0, 12));
@@ -110,6 +114,7 @@ export function PopupApp() {
 
     const tab = await chrome.tabs.get(tabId);
     const detectedSite = detectSupportedSiteFromUrl(tab.url) ?? 'chatgpt';
+    setSourceSite(detectedSite);
     setActiveSite(detectedSite);
 
     const permission = await hasSitePermissionForUrl(tab.url);
@@ -138,9 +143,15 @@ export function PopupApp() {
   }, []);
 
   const conversationCountLabel = useMemo(() => {
+    if (!currentSiteMatches) {
+      return isZh ? '等待切换源标签页' : 'Waiting for matching tab';
+    }
+    if (!supportsBatch) {
+      return isZh ? '当前模式' : 'Current-only mode';
+    }
     if (conversations.length === 0) return translate(language, 'noScanYet');
     return `${conversations.length} ${translate(language, 'detectedSuffix')}`;
-  }, [conversations, language]);
+  }, [conversations, currentSiteMatches, language, supportsBatch, isZh]);
 
   async function ensureSitePermission(needTabs = false) {
     if (!sourceTabId) {
@@ -178,7 +189,7 @@ export function PopupApp() {
   }
 
   async function handleGrantPermission() {
-    if (!sourceTabId) return;
+    if (!sourceTabId || !currentSiteMatches) return;
     startProgress(isZh ? '正在申请当前站点权限...' : 'Requesting current site permission...');
     setBusy(true);
     try {
@@ -199,7 +210,7 @@ export function PopupApp() {
   }
 
   async function handleExportCurrent() {
-    if (!sourceTabId || activeSite !== 'chatgpt') return;
+    if (!sourceTabId || !currentSiteMatches) return;
     startProgress(translate(language, 'exportingCurrentAs', { format: format.toUpperCase() }));
     setBusy(true);
     try {
@@ -221,7 +232,7 @@ export function PopupApp() {
   }
 
   async function handleScan() {
-    if (!sourceTabId || activeSite !== 'chatgpt') return;
+    if (!sourceTabId || !supportsBatch) return;
     startProgress(translate(language, 'scanningSidebar'));
     setBusy(true);
     try {
@@ -243,7 +254,7 @@ export function PopupApp() {
   }
 
   async function handleExportAll() {
-    if (!sourceTabId || activeSite !== 'chatgpt') return;
+    if (!sourceTabId || !supportsBatch) return;
     startProgress(isZh ? '正在准备导出全部会话...' : 'Preparing to export all conversations...');
     setBusy(true);
     try {
@@ -279,9 +290,10 @@ export function PopupApp() {
     await callRuntime({ type: 'OPEN_DASHBOARD', sourceTabId: sourceTabId ?? undefined });
   }
 
-  const isSupportedSite = activeSite === 'chatgpt';
   const shellClassName = popupParams.embedded ? 'w-full min-h-full bg-transparent p-0 text-ink' : 'w-[500px] min-h-screen bg-transparent p-4 text-ink';
   const cardClassName = popupParams.embedded ? 'h-full overflow-hidden rounded-none border-0 bg-white/92 shadow-none backdrop-blur' : 'overflow-hidden rounded-[30px] border border-white/70 bg-white/85 shadow-panel backdrop-blur';
+  const selectedSiteLabel = siteOptions.find((site) => site.value === activeSite)?.label ?? activeSite;
+  const sourceSiteLabel = siteOptions.find((site) => site.value === sourceSite)?.label ?? sourceSite;
 
   return (
     <main className={shellClassName}>
@@ -314,69 +326,77 @@ export function PopupApp() {
         </div>
 
         <div className="p-5">
-          {!isSupportedSite ? (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              {isZh ? `${siteOptions.find((item) => item.value === activeSite)?.label} 导出页已预留，适配器还在开发中。` : `${siteOptions.find((item) => item.value === activeSite)?.label} export page is reserved. The adapter is still in progress.`}
+          {!currentSiteMatches ? (
+            <div className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {isZh ? `当前源标签页是 ${sourceSiteLabel}，不是 ${selectedSiteLabel}。请先切到对应平台页面，再执行导出。` : `The source tab is ${sourceSiteLabel}, not ${selectedSiteLabel}. Switch to a matching page before exporting.`}
             </div>
-          ) : (
-            <>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="text-xs uppercase tracking-[0.24em] text-tide">{translate(language, 'currentTab')}</div>
-                  <div className="mt-2 text-lg font-semibold">{sourceTabId ? translate(language, 'connected') : translate(language, 'missing')}</div>
-                  <div className="mt-2 text-sm text-slate-500">{statusText}</div>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="text-xs uppercase tracking-[0.24em] text-tide">{translate(language, 'conversationList')}</div>
-                  <div className="mt-2 text-lg font-semibold">{conversationCountLabel}</div>
-                  <div className="mt-2 text-sm text-slate-500">{translate(language, 'sidebarTip')}</div>
-                </div>
-              </div>
+          ) : null}
 
-              {!permissionGranted ? (
-                <button type="button" onClick={() => void handleGrantPermission()} disabled={busy || !sourceTabId} className="mt-4 w-full rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:bg-slate-100">
-                  {isZh ? '先授权当前站点' : 'Grant current site first'}
-                </button>
-              ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs uppercase tracking-[0.24em] text-tide">{translate(language, 'currentTab')}</div>
+              <div className="mt-2 text-lg font-semibold">{sourceTabId ? translate(language, 'connected') : translate(language, 'missing')}</div>
+              <div className="mt-2 text-sm text-slate-500">{statusText}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs uppercase tracking-[0.24em] text-tide">{translate(language, 'conversationList')}</div>
+              <div className="mt-2 text-lg font-semibold">{conversationCountLabel}</div>
+              <div className="mt-2 text-sm text-slate-500">{!currentSiteMatches ? (isZh ? '能力面板已切换，但执行会跟随当前源标签页。' : 'The capability tab changed, but execution still follows the current source tab.') : supportsBatch ? translate(language, 'sidebarTip') : (isZh ? '当前平台先开放当前会话导出，批量扫描稍后补齐。' : 'This platform supports current conversation export first. Batch scanning comes later.')}</div>
+            </div>
+          </div>
 
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-medium text-slate-800">{isZh ? '执行进度' : 'Execution progress'}</div>
-                  <div className="text-xs text-slate-500">{progress}%</div>
-                </div>
-                <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-200">
-                  <div className="h-full rounded-full bg-amber-500 transition-all duration-300" style={{ width: `${progress}%` }} />
-                </div>
-                <div className="mt-3 max-h-36 overflow-auto rounded-xl bg-white px-3 py-2 text-xs text-slate-600">
-                  {logs.length === 0 ? (
-                    <div>{isZh ? '点击按钮后，这里会持续显示每一步：权限、扫描、抓取、导出、落盘。' : 'After you click a button, each step will appear here: permission, scan, capture, export, save.'}</div>
-                  ) : (
-                    <ul className="space-y-1.5">
-                      {logs.map((item) => (
-                        <li key={item.id} className={item.level === 'error' ? 'text-red-600' : item.level === 'success' ? 'text-emerald-700' : 'text-slate-600'}>{item.text}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
+          {!permissionGranted ? (
+            <button type="button" onClick={() => void handleGrantPermission()} disabled={busy || !sourceTabId || !currentSiteMatches} className="mt-4 w-full rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:bg-slate-100">
+              {isZh ? '先授权当前站点' : 'Grant current site first'}
+            </button>
+          ) : null}
 
-              <div className="mt-5 grid gap-3">
-                {exportFormats.map((item) => (
-                  <button key={item.value} type="button" onClick={() => setFormat(item.value)} className={`rounded-2xl border px-4 py-3 text-left transition ${format === item.value ? 'border-ink bg-ink text-white' : 'border-slate-200 bg-white text-slate-800 hover:border-slate-400'}`}>
-                    <div className="text-sm font-medium">{item.label === 'ZIP' ? translate(language, 'bundle') : item.label}</div>
-                    <div className={`mt-1 text-xs ${format === item.value ? 'text-slate-200' : 'text-slate-500'}`}>{translate(language, item.hintKey)}</div>
-                  </button>
-                ))}
-              </div>
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-medium text-slate-800">{isZh ? '执行进度' : 'Execution progress'}</div>
+              <div className="text-xs text-slate-500">{progress}%</div>
+            </div>
+            <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-200">
+              <div className="h-full rounded-full bg-amber-500 transition-all duration-300" style={{ width: `${progress}%` }} />
+            </div>
+            <div className="mt-3 max-h-36 overflow-auto rounded-xl bg-white px-3 py-2 text-xs text-slate-600">
+              {logs.length === 0 ? (
+                <div>{isZh ? '点击按钮后，这里会持续显示每一步：权限、扫描、抓取、导出、落盘。' : 'After you click a button, each step will appear here: permission, scan, capture, export, save.'}</div>
+              ) : (
+                <ul className="space-y-1.5">
+                  {logs.map((item) => (
+                    <li key={item.id} className={item.level === 'error' ? 'text-red-600' : item.level === 'success' ? 'text-emerald-700' : 'text-slate-600'}>{item.text}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
 
-              <div className="mt-5 grid gap-3">
-                <button type="button" onClick={() => void handleExportCurrent()} disabled={busy || !sourceTabId} className="rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'working') : translate(language, 'exportCurrentConversation')}</button>
+          <div className="mt-5 grid gap-3">
+            {exportFormats.filter((item) => supportsBatch || item.value !== 'zip').map((item) => (
+              <button key={item.value} type="button" onClick={() => setFormat(item.value)} className={`rounded-2xl border px-4 py-3 text-left transition ${format === item.value ? 'border-ink bg-ink text-white' : 'border-slate-200 bg-white text-slate-800 hover:border-slate-400'}`}>
+                <div className="text-sm font-medium">{item.label === 'ZIP' ? translate(language, 'bundle') : item.label}</div>
+                <div className={`mt-1 text-xs ${format === item.value ? 'text-slate-200' : 'text-slate-500'}`}>{translate(language, item.hintKey)}</div>
+              </button>
+            ))}
+          </div>
+
+          {currentSiteMatches && !supportsBatch ? (
+            <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+              {isZh ? '当前平台已接入当前会话导出。侧边栏扫描和批量导出仍保持 ChatGPT 专用，避免误抓取。' : 'Current conversation export is enabled for this platform. Sidebar scanning and batch export remain ChatGPT-only to avoid bad captures.'}
+            </div>
+          ) : null}
+
+          <div className="mt-5 grid gap-3">
+            <button type="button" onClick={() => void handleExportCurrent()} disabled={busy || !sourceTabId || !currentSiteMatches} className="rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'working') : translate(language, 'exportCurrentConversation')}</button>
+            {supportsBatch ? (
+              <>
                 <button type="button" onClick={() => void handleScan()} disabled={busy || !sourceTabId} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{translate(language, 'scanConversationList')}</button>
                 <button type="button" onClick={() => void handleExportAll()} disabled={busy || !sourceTabId} className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-300">{isZh ? '导出全部会话' : 'Export all conversations'}</button>
-                <button type="button" onClick={() => void openDashboard()} className="rounded-2xl border border-transparent bg-amber-100 px-4 py-3 text-sm font-medium text-amber-900 transition hover:bg-amber-200">{translate(language, 'openFullDashboard')}</button>
-              </div>
-            </>
-          )}
+              </>
+            ) : null}
+            <button type="button" onClick={() => void openDashboard()} className="rounded-2xl border border-transparent bg-amber-100 px-4 py-3 text-sm font-medium text-amber-900 transition hover:bg-amber-200">{translate(language, 'openFullDashboard')}</button>
+          </div>
         </div>
       </section>
     </main>

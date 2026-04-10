@@ -50,6 +50,7 @@ export function DashboardApp() {
   const { language, setLanguage } = useLanguage();
   const isZh = language === 'zh-CN';
   const [sourceTabId] = useState<number | null>(() => getSourceTabId());
+  const [sourceSite, setSourceSite] = useState<SupportedSite>('chatgpt');
   const [activeSite, setActiveSite] = useState<SupportedSite>('chatgpt');
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [history, setHistory] = useState<ExportHistoryRecord[]>([]);
@@ -62,6 +63,9 @@ export function DashboardApp() {
   const [scanMessage, setScanMessage] = useState('');
   const [progress, setProgress] = useState(0);
   const [logs, setLogs] = useState<DashboardLogItem[]>([]);
+
+  const currentSiteMatches = activeSite === sourceSite;
+  const supportsBatch = currentSiteMatches && activeSite === 'chatgpt';
 
   function pushLog(text: string, level: DashboardLogItem['level'] = 'info') {
     setLogs((current) => [{ id: `${Date.now()}-${current.length}`, text, level }, ...current].slice(0, 14));
@@ -101,11 +105,15 @@ export function DashboardApp() {
   async function refreshPageContext() {
     if (sourceTabId) {
       const tab = await chrome.tabs.get(sourceTabId);
-      setActiveSite(detectSupportedSiteFromUrl(tab.url) ?? 'chatgpt');
+      const detectedSite = detectSupportedSiteFromUrl(tab.url) ?? 'chatgpt';
+      setSourceSite(detectedSite);
+      setActiveSite(detectedSite);
       const permission = await hasSitePermissionForUrl(tab.url);
       setPermissionGranted(permission.granted);
+      setScanMessage(detectedSite === 'chatgpt'
+        ? translate(language, 'scanPopulate')
+        : (isZh ? '当前页面可以直接导出当前会话。' : 'This page can export the current conversation directly.'));
     }
-    setScanMessage(translate(language, 'scanPopulate'));
     await refreshHistoryAndJobs();
   }
 
@@ -151,7 +159,7 @@ export function DashboardApp() {
   }
 
   async function handleGrantPermission() {
-    if (!sourceTabId) return;
+    if (!sourceTabId || !currentSiteMatches) return;
     startProgress(isZh ? '正在申请当前站点权限...' : 'Requesting current site permission...');
     setBusy(true);
     try {
@@ -168,6 +176,29 @@ export function DashboardApp() {
     } finally {
       setBusy(false);
       await refreshPageContext();
+    }
+  }
+
+  async function handleCurrentExport() {
+    if (!sourceTabId || !currentSiteMatches) return;
+    startProgress(translate(language, 'exportingCurrentAs', { format: format.toUpperCase() }));
+    setBusy(true);
+
+    try {
+      if (!(await ensurePermissions())) return;
+      markStep(56, isZh ? '正在抓取当前会话内容...' : 'Capturing current conversation...');
+      const response = await callRuntime({ type: 'EXPORT_CURRENT_CONVERSATION', sourceTabId, format });
+      if (response.ok && 'conversation' in response) {
+        markStep(92, isZh ? '导出内容已生成，正在落盘...' : 'Export artifact generated. Saving file...');
+        completeProgress(translate(language, 'exportedConversation', { title: response.conversation.title }));
+        await refreshHistoryAndJobs();
+      } else {
+        failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
+      }
+    } catch (exportError) {
+      failProgress(exportError instanceof Error ? exportError.message : (isZh ? '导出失败。' : 'Export failed.'));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -190,7 +221,7 @@ export function DashboardApp() {
   }
 
   async function handleScan(kind: 'default' | 'team' = 'default') {
-    if (activeSite !== 'chatgpt') return;
+    if (!supportsBatch) return;
     startProgress(kind === 'team' ? (isZh ? '正在准备扫描 ChatGPT Team 工作空间...' : 'Preparing to scan the ChatGPT Team workspace...') : translate(language, 'scanningSidebar'));
     setBusy(true);
 
@@ -214,7 +245,7 @@ export function DashboardApp() {
   }
 
   async function handleBatchExport(selectedOverride?: ConversationSummary[]) {
-    if (activeSite !== 'chatgpt') return;
+    if (!supportsBatch) return;
     const selected = selectedOverride ?? conversations.filter((item) => selectedIds.includes(item.id));
     startProgress(translate(language, 'exportingSelectedAs', { count: selected.length, format: format.toUpperCase() }));
     setBusy(true);
@@ -287,7 +318,8 @@ export function DashboardApp() {
   }), [jobs]);
 
   const allSelected = conversations.length > 0 && selectedIds.length === conversations.length;
-  const isSupportedSite = activeSite === 'chatgpt';
+  const selectedSiteLabel = siteOptions.find((site) => site.value === activeSite)?.label ?? activeSite;
+  const sourceSiteLabel = siteOptions.find((site) => site.value === sourceSite)?.label ?? sourceSite;
 
   return (
     <main className="min-h-screen bg-transparent px-6 py-8 text-ink">
@@ -299,7 +331,7 @@ export function DashboardApp() {
               <div>
                 <p className="text-xs uppercase tracking-[0.34em] text-white/65">AI Chat Exporter Dashboard</p>
                 <h1 className="mt-4 text-4xl font-semibold">{translate(language, 'dashboardTitle')}</h1>
-                <p className="mt-3 max-w-3xl text-sm text-white/75">{translate(language, 'dashboardIntro')}</p>
+                <p className="mt-3 max-w-3xl text-sm text-white/75">{supportsBatch ? translate(language, 'dashboardIntro') : (isZh ? '当前平台已接入当前会话导出，批量扫描仍保持 ChatGPT 专用。' : 'Current conversation export is enabled for this platform. Batch scanning stays ChatGPT-only for now.')}</p>
               </div>
             </div>
             <div className="min-w-[120px]">
@@ -323,145 +355,156 @@ export function DashboardApp() {
           </div>
         </section>
 
-        {!isSupportedSite ? (
-          <section className="mt-8 rounded-[28px] border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
-            {isZh ? `${siteOptions.find((item) => item.value === activeSite)?.label} 页面和导出入口已预留，适配器还在开发中。` : `${siteOptions.find((item) => item.value === activeSite)?.label} page and export entry are reserved. The adapter is still in progress.`}
-          </section>
-        ) : (
-          <div className="mt-8 grid gap-8 xl:grid-cols-[1.2fr_0.8fr]">
-            <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.28em] text-tide">{translate(language, 'conversationScan')}</p>
-                  <h2 className="mt-2 text-2xl font-semibold">{translate(language, 'selectWhatToExport')}</h2>
-                </div>
+        <div className="mt-8 grid gap-8 xl:grid-cols-[1.2fr_0.8fr]">
+          <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
+            {!currentSiteMatches ? (
+              <div className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                {isZh ? `当前源标签页是 ${sourceSiteLabel}，不是 ${selectedSiteLabel}。请先切到对应平台页面，再执行导出。` : `The source tab is ${sourceSiteLabel}, not ${selectedSiteLabel}. Switch to a matching page before exporting.`}
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.28em] text-tide">{translate(language, 'conversationScan')}</p>
+                <h2 className="mt-2 text-2xl font-semibold">{supportsBatch ? translate(language, 'selectWhatToExport') : (isZh ? '导出当前会话' : 'Export current conversation')}</h2>
+              </div>
+              {supportsBatch ? (
                 <div className="flex flex-wrap gap-2">
                   <button type="button" onClick={() => void handleScan('default')} disabled={busy} className="rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'working') : translate(language, 'scanChatGptSidebar')}</button>
                   <button type="button" onClick={() => void handleScan('team')} disabled={busy} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{isZh ? '扫描 Team 工作空间' : 'Scan Team workspace'}</button>
                 </div>
-              </div>
-
-              {!permissionGranted ? (
-                <button type="button" onClick={() => void handleGrantPermission()} disabled={busy || !sourceTabId} className="mt-4 w-full rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:bg-slate-100">
-                  {isZh ? '先授权当前站点' : 'Grant current site first'}
-                </button>
               ) : null}
+            </div>
 
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-medium text-slate-800">{isZh ? '执行进度' : 'Execution progress'}</div>
-                  <div className="text-xs text-slate-500">{progress}%</div>
-                </div>
-                <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-200">
-                  <div className="h-full rounded-full bg-amber-500 transition-all duration-300" style={{ width: `${progress}%` }} />
-                </div>
-                <div className="mt-3 max-h-36 overflow-auto rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                  {logs.length === 0 ? (
-                    <div>{isZh ? '点击扫描或导出后，这里会持续显示每一步：权限、扫描、抓取、导出、落盘。' : 'After you click scan or export, each step will appear here: permission, scan, capture, export, save.'}</div>
-                  ) : (
-                    <ul className="space-y-1.5">
-                      {logs.map((item) => (
-                        <li key={item.id} className={item.level === 'error' ? 'text-red-600' : item.level === 'success' ? 'text-emerald-700' : 'text-slate-600'}>{item.text}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+            {!permissionGranted ? (
+              <button type="button" onClick={() => void handleGrantPermission()} disabled={busy || !sourceTabId || !currentSiteMatches} className="mt-4 w-full rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:bg-slate-100">
+                {isZh ? '先授权当前站点' : 'Grant current site first'}
+              </button>
+            ) : null}
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-slate-800">{isZh ? '执行进度' : 'Execution progress'}</div>
+                <div className="text-xs text-slate-500">{progress}%</div>
               </div>
-
-              <p className="mt-4 text-sm text-slate-600">{scanMessage}</p>
-              {error ? <p className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
-
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                {exportFormats.map((item) => (
-                  <button key={item.value} type="button" onClick={() => setFormat(item.value)} className={`rounded-2xl border px-4 py-3 text-left transition ${format === item.value ? 'border-ink bg-ink text-white' : 'border-slate-200 bg-white hover:border-slate-400'}`}>
-                    <div className="text-sm font-medium">{item.value === 'zip' ? translate(language, 'fullBundle') : item.label}</div>
-                    <div className={`mt-1 text-xs ${format === item.value ? 'text-slate-200' : 'text-slate-500'}`}>{item.value === 'zip' ? translate(language, 'eachConversationBundle') : translate(language, 'packedIntoOneZip')}</div>
-                  </button>
-                ))}
+              <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-200">
+                <div className="h-full rounded-full bg-amber-500 transition-all duration-300" style={{ width: `${progress}%` }} />
               </div>
-
-              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
-                <span>{translate(language, 'scannedCount', { count: conversations.length })}</span>
-                <div className="flex gap-2 items-center">
-                  <span>{translate(language, 'selectedCount', { count: selectedIds.length })}</span>
-                  <button type="button" onClick={toggleSelectAll} className="rounded-full border border-slate-300 px-3 py-1 text-xs text-slate-700 hover:bg-slate-100">{allSelected ? (isZh ? '取消全选' : 'Clear all') : (isZh ? '全选聊天' : 'Select all')}</button>
-                </div>
-              </div>
-
-              <div className="mt-4 max-h-[440px] overflow-auto rounded-3xl border border-slate-200 bg-white">
-                {conversations.length === 0 ? <div className="px-5 py-10 text-sm text-slate-500">{translate(language, 'noConversationsScanned')}</div> : (
-                  <ul className="divide-y divide-slate-200">
-                    {conversations.map((item) => {
-                      const selected = selectedIds.includes(item.id);
-                      return (
-                        <li key={item.id} className="px-5 py-4">
-                          <label className="flex cursor-pointer items-start gap-3">
-                            <input type="checkbox" checked={selected} onChange={() => toggleConversation(item.id)} className="mt-1 h-4 w-4 rounded border-slate-300 text-ink" />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="truncate text-sm font-medium text-slate-900">{item.title}</span>
-                                {item.isActive ? <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] uppercase text-amber-900">{translate(language, 'current')}</span> : null}
-                              </div>
-                              <p className="mt-1 truncate text-xs text-slate-500">{item.url}</p>
-                            </div>
-                          </label>
-                        </li>
-                      );
-                    })}
+              <div className="mt-3 max-h-36 overflow-auto rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                {logs.length === 0 ? (
+                  <div>{isZh ? '点击扫描或导出后，这里会持续显示每一步：权限、扫描、抓取、导出、落盘。' : 'After you click scan or export, each step will appear here: permission, scan, capture, export, save.'}</div>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {logs.map((item) => (
+                      <li key={item.id} className={item.level === 'error' ? 'text-red-600' : item.level === 'success' ? 'text-emerald-700' : 'text-slate-600'}>{item.text}</li>
+                    ))}
                   </ul>
                 )}
               </div>
+            </div>
 
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <button type="button" onClick={() => void handleBatchExport()} disabled={busy || selectedIds.length === 0} className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'exportingBatch') : translate(language, 'exportSelectedConversations')}</button>
-                <button type="button" onClick={() => void handleBatchExport(conversations)} disabled={busy || conversations.length === 0} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{isZh ? '导出全部聊天' : 'Export all chats'}</button>
+            <p className="mt-4 text-sm text-slate-600">{scanMessage}</p>
+            {error ? <p className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              {exportFormats.filter((item) => supportsBatch || item.value !== 'zip').map((item) => (
+                <button key={item.value} type="button" onClick={() => setFormat(item.value)} className={`rounded-2xl border px-4 py-3 text-left transition ${format === item.value ? 'border-ink bg-ink text-white' : 'border-slate-200 bg-white hover:border-slate-400'}`}>
+                  <div className="text-sm font-medium">{item.value === 'zip' ? translate(language, 'fullBundle') : item.label}</div>
+                  <div className={`mt-1 text-xs ${format === item.value ? 'text-slate-200' : 'text-slate-500'}`}>{item.value === 'zip' ? translate(language, 'eachConversationBundle') : translate(language, 'packedIntoOneZip')}</div>
+                </button>
+              ))}
+            </div>
+
+            {!supportsBatch ? (
+              <div className="mt-5">
+                <button type="button" onClick={() => void handleCurrentExport()} disabled={busy || !sourceTabId || !currentSiteMatches} className="w-full rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'working') : translate(language, 'exportCurrentConversation')}</button>
+              </div>
+            ) : (
+              <>
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
+                  <span>{translate(language, 'scannedCount', { count: conversations.length })}</span>
+                  <div className="flex gap-2 items-center">
+                    <span>{translate(language, 'selectedCount', { count: selectedIds.length })}</span>
+                    <button type="button" onClick={toggleSelectAll} className="rounded-full border border-slate-300 px-3 py-1 text-xs text-slate-700 hover:bg-slate-100">{allSelected ? (isZh ? '取消全选' : 'Clear all') : (isZh ? '全选聊天' : 'Select all')}</button>
+                  </div>
+                </div>
+
+                <div className="mt-4 max-h-[440px] overflow-auto rounded-3xl border border-slate-200 bg-white">
+                  {conversations.length === 0 ? <div className="px-5 py-10 text-sm text-slate-500">{translate(language, 'noConversationsScanned')}</div> : (
+                    <ul className="divide-y divide-slate-200">
+                      {conversations.map((item) => {
+                        const selected = selectedIds.includes(item.id);
+                        return (
+                          <li key={item.id} className="px-5 py-4">
+                            <label className="flex cursor-pointer items-start gap-3">
+                              <input type="checkbox" checked={selected} onChange={() => toggleConversation(item.id)} className="mt-1 h-4 w-4 rounded border-slate-300 text-ink" />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="truncate text-sm font-medium text-slate-900">{item.title}</span>
+                                  {item.isActive ? <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] uppercase text-amber-900">{translate(language, 'current')}</span> : null}
+                                </div>
+                                <p className="mt-1 truncate text-xs text-slate-500">{item.url}</p>
+                              </div>
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <button type="button" onClick={() => void handleCurrentExport()} disabled={busy || !sourceTabId} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{busy ? translate(language, 'working') : translate(language, 'exportCurrentConversation')}</button>
+                  <button type="button" onClick={() => void handleBatchExport()} disabled={busy || selectedIds.length === 0} className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'exportingBatch') : translate(language, 'exportSelectedConversations')}</button>
+                  <button type="button" onClick={() => void handleBatchExport(conversations)} disabled={busy || conversations.length === 0} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{isZh ? '导出全部聊天' : 'Export all chats'}</button>
+                </div>
+              </>
+            )}
+          </section>
+
+          <div className="grid gap-8">
+            <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
+              <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{translate(language, 'recentJobs')}</h2><span className="text-sm text-slate-500">{jobs.length}</span></div>
+              <div className="mt-4 space-y-3">
+                {jobs.length === 0 ? <div className="rounded-2xl bg-white px-4 py-5 text-sm text-slate-500">{translate(language, 'noJobsYet')}</div> : jobs.slice(0, 8).map((item) => (
+                  <div key={item.id} className="rounded-2xl bg-white px-4 py-4">
+                    <div className="flex items-center justify-between gap-3"><div className="truncate text-sm font-medium text-slate-900">{item.title}</div><span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] uppercase text-slate-700">{item.status}</span></div>
+                    <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500"><span>{item.format}</span><span>{new Date(item.updatedAt).toLocaleString()}</span></div>
+                    {item.error ? <p className="mt-2 text-xs text-red-600">{item.error}</p> : null}
+                  </div>
+                ))}
               </div>
             </section>
 
-            <div className="grid gap-8">
-              <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
-                <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{translate(language, 'recentJobs')}</h2><span className="text-sm text-slate-500">{jobs.length}</span></div>
-                <div className="mt-4 space-y-3">
-                  {jobs.length === 0 ? <div className="rounded-2xl bg-white px-4 py-5 text-sm text-slate-500">{translate(language, 'noJobsYet')}</div> : jobs.slice(0, 8).map((item) => (
-                    <div key={item.id} className="rounded-2xl bg-white px-4 py-4">
-                      <div className="flex items-center justify-between gap-3"><div className="truncate text-sm font-medium text-slate-900">{item.title}</div><span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] uppercase text-slate-700">{item.status}</span></div>
-                      <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500"><span>{item.format}</span><span>{new Date(item.updatedAt).toLocaleString()}</span></div>
-                      {item.error ? <p className="mt-2 text-xs text-red-600">{item.error}</p> : null}
+            <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
+              <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{translate(language, 'downloadedArchives')}</h2><span className="text-sm text-slate-500">{history.length}</span></div>
+              <p className="mt-2 text-xs text-slate-500">{translate(language, 'browserDownloadNote')}</p>
+              <div className="mt-4 space-y-3">
+                {history.length === 0 ? <div className="rounded-2xl bg-white px-4 py-5 text-sm text-slate-500">{translate(language, 'noExportsYet')}</div> : history.slice(0, 8).map((item) => (
+                  <div key={item.id} className="rounded-2xl bg-white px-4 py-4">
+                    <div className="truncate text-sm font-medium text-slate-900">{item.title}</div>
+                    <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500"><span>{item.filename}</span><span>{new Date(item.createdAt).toLocaleString()}</span></div>
+
+                    <div className="mt-2 text-xs text-slate-500">
+                      <span className="font-medium text-slate-700">{translate(language, 'savedAs')}:</span>{' '}
+                      <span className="break-all">{item.savedAs ?? translate(language, 'unavailableDownloadPath')}</span>
                     </div>
-                  ))}
-                </div>
-              </section>
-
-              <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
-                <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{translate(language, 'downloadedArchives')}</h2><span className="text-sm text-slate-500">{history.length}</span></div>
-                <p className="mt-2 text-xs text-slate-500">{translate(language, 'browserDownloadNote')}</p>
-                <div className="mt-4 space-y-3">
-                  {history.length === 0 ? <div className="rounded-2xl bg-white px-4 py-5 text-sm text-slate-500">{translate(language, 'noExportsYet')}</div> : history.slice(0, 8).map((item) => (
-                    <div key={item.id} className="rounded-2xl bg-white px-4 py-4">
-                      <div className="truncate text-sm font-medium text-slate-900">{item.title}</div>
-                      <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500"><span>{item.filename}</span><span>{new Date(item.createdAt).toLocaleString()}</span></div>
-
-                      <div className="mt-2 text-xs text-slate-500">
-                        <span className="font-medium text-slate-700">{translate(language, 'savedAs')}:</span>{' '}
-                        <span className="break-all">{item.savedAs ?? translate(language, 'unavailableDownloadPath')}</span>
+                    {item.downloadId ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button type="button" onClick={() => void handleOpenDownload(item, 'file')} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100">
+                          {translate(language, 'openFile')}
+                        </button>
+                        <button type="button" onClick={() => void handleOpenDownload(item, 'folder')} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100">
+                          {translate(language, 'openFolder')}
+                        </button>
                       </div>
-                      {item.downloadId ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button type="button" onClick={() => void handleOpenDownload(item, 'file')} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100">
-                            {translate(language, 'openFile')}
-                          </button>
-                          <button type="button" onClick={() => void handleOpenDownload(item, 'folder')} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100">
-                            {translate(language, 'openFolder')}
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </section>
           </div>
-        )}
+        </div>
       </div>
     </main>
   );
