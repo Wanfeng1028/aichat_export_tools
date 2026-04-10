@@ -4,11 +4,11 @@ const permissionOrigins: Record<SupportedSite, string[]> = {
   chatgpt: ['https://chatgpt.com/*'],
   claude: ['https://claude.ai/*'],
   gemini: ['https://gemini.google.com/*'],
-  kimi: ['https://kimi.moonshot.cn/*'],
+  kimi: ['https://kimi.moonshot.cn/*', 'https://kimi.com/*', 'https://www.kimi.com/*'],
   deepseek: ['https://chat.deepseek.com/*'],
   grok: ['https://grok.com/*', 'https://x.com/i/grok*'],
   doubao: ['https://www.doubao.com/*', 'https://doubao.com/*'],
-  qianwen: ['https://tongyi.aliyun.com/*', 'https://qianwen.aliyun.com/*'],
+  qianwen: ['https://tongyi.aliyun.com/*', 'https://qianwen.aliyun.com/*', 'https://tongyi.com/*', 'https://www.tongyi.com/*', 'https://qwen.ai/*', 'https://www.qwen.ai/*'],
   yiyan: ['https://yiyan.baidu.com/*', 'https://wenxin.baidu.com/*']
 };
 
@@ -19,11 +19,11 @@ export function detectSupportedSiteFromUrl(url?: string | null): SupportedSite |
     if (hostname.includes('chatgpt.com')) return 'chatgpt';
     if (hostname.includes('claude.ai')) return 'claude';
     if (hostname.includes('gemini.google.com')) return 'gemini';
-    if (hostname.includes('kimi.moonshot.cn')) return 'kimi';
+    if (hostname.includes('kimi.moonshot.cn') || hostname === 'kimi.com' || hostname === 'www.kimi.com') return 'kimi';
     if (hostname.includes('chat.deepseek.com')) return 'deepseek';
     if (hostname.includes('grok.com') || hostname.includes('x.com')) return 'grok';
     if (hostname.includes('doubao.com')) return 'doubao';
-    if (hostname.includes('tongyi.aliyun.com') || hostname.includes('qianwen.aliyun.com')) return 'qianwen';
+    if (hostname.includes('tongyi.aliyun.com') || hostname.includes('qianwen.aliyun.com') || hostname === 'tongyi.com' || hostname === 'www.tongyi.com' || hostname === 'qwen.ai' || hostname === 'www.qwen.ai') return 'qianwen';
     if (hostname.includes('yiyan.baidu.com') || hostname.includes('wenxin.baidu.com')) return 'yiyan';
     return null;
   } catch {
@@ -50,6 +50,25 @@ export async function requestSitePermissionForUrl(url?: string | null): Promise<
   const site = detectSupportedSiteFromUrl(url);
   if (!site) return { granted: false, site: null };
   const granted = await requestSitePermission(site);
+  return { granted, site };
+}
+
+export async function requestPermissionsForUrl(
+  url: string | null | undefined,
+  options: { tabs?: boolean } = {}
+): Promise<{ granted: boolean; site: SupportedSite | null }> {
+  const site = detectSupportedSiteFromUrl(url);
+  if (!site) return { granted: false, site: null };
+
+  const request: chrome.permissions.Permissions = {
+    origins: permissionOrigins[site]
+  };
+
+  if (options.tabs) {
+    request.permissions = ['tabs'];
+  }
+
+  const granted = await chrome.permissions.request(request);
   return { granted, site };
 }
 

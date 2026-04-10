@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ConversationSummary, ExportFormat, ExportHistoryRecord, ExportJobRecord, SupportedSite } from '../../core/types';
 import type { RuntimeResponse } from '../../background/message-bus';
-import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestSitePermissionForUrl, requestTabsPermission } from '../../background/permissions';
+import { detectSupportedSiteFromUrl, hasSitePermissionForUrl, requestPermissionsForUrl } from '../../background/permissions';
 import { languageOptions, translate } from '../shared/i18n';
 import { useLanguage } from '../shared/hooks/useLanguage';
+import { clearScannedConversationCache, getScannedConversationCache, type ScannedConversationCache, setScannedConversationCache, subscribeScannedConversationCache } from '../../storage/scanned-conversations';
 
 const exportFormats: Array<{ value: ExportFormat; label: string }> = [
   { value: 'markdown', label: 'Markdown' },
@@ -49,7 +50,9 @@ async function callRuntime(message: Record<string, unknown>): Promise<RuntimeRes
 export function DashboardApp() {
   const { language, setLanguage } = useLanguage();
   const isZh = language === 'zh-CN';
-  const [sourceTabId] = useState<number | null>(() => getSourceTabId());
+  const [sourceTabId, setSourceTabId] = useState<number | null>(() => getSourceTabId());
+  const [sourceUrl, setSourceUrl] = useState<string | null>(null);
+  const [sourceSite, setSourceSite] = useState<SupportedSite>('chatgpt');
   const [activeSite, setActiveSite] = useState<SupportedSite>('chatgpt');
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [history, setHistory] = useState<ExportHistoryRecord[]>([]);
@@ -62,6 +65,10 @@ export function DashboardApp() {
   const [scanMessage, setScanMessage] = useState('');
   const [progress, setProgress] = useState(0);
   const [logs, setLogs] = useState<DashboardLogItem[]>([]);
+
+  const currentSiteMatches = activeSite === sourceSite;
+  const supportsBatch = currentSiteMatches;
+  const supportsTeamWorkspace = currentSiteMatches && activeSite === 'chatgpt';
 
   function pushLog(text: string, level: DashboardLogItem['level'] = 'info') {
     setLogs((current) => [{ id: `${Date.now()}-${current.length}`, text, level }, ...current].slice(0, 14));
@@ -98,15 +105,96 @@ export function DashboardApp() {
     void refreshPageContext();
   }, [language, sourceTabId]);
 
+  useEffect(() => {
+    if (!sourceTabId) {
+      setConversations([]);
+      setSelectedIds([]);
+      return;
+    }
+
+    let cancelled = false;
+    const consumeCache = (cache: ScannedConversationCache | null) => {
+      if (cancelled) return;
+      void syncFromCache(cache, sourceSite);
+    };
+
+    void getScannedConversationCache(sourceTabId).then(consumeCache);
+    const unsubscribe = subscribeScannedConversationCache(sourceTabId, consumeCache);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [sourceSite, sourceTabId]);
+
+  useEffect(() => {
+    if (!sourceTabId) return;
+
+    const handleUpdated = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (tabId !== sourceTabId) return;
+      if (!changeInfo.url && changeInfo.status !== 'complete') return;
+      void refreshPageContext();
+    };
+
+    const handleRemoved = (tabId: number) => {
+      if (tabId !== sourceTabId) return;
+      setSourceTabId(null);
+      setSourceUrl(null);
+      setConversations([]);
+      setSelectedIds([]);
+      setPermissionGranted(false);
+      setScanMessage(translate(language, 'sourceTabMissing'));
+    };
+
+    chrome.tabs.onUpdated.addListener(handleUpdated);
+    chrome.tabs.onRemoved.addListener(handleRemoved);
+    return () => {
+      chrome.tabs.onUpdated.removeListener(handleUpdated);
+      chrome.tabs.onRemoved.removeListener(handleRemoved);
+    };
+  }, [language, sourceTabId]);
+
+  async function syncFromCache(cache: ScannedConversationCache | null, nextSite: SupportedSite) {
+    if (!sourceTabId) return;
+    if (!cache || cache.site === nextSite) {
+      const nextConversations = cache?.conversations ?? [];
+      setConversations(nextConversations);
+      setSelectedIds((current) => {
+        const validCurrent = current.filter((id) => nextConversations.some((item) => item.id === id));
+        if (validCurrent.length > 0 || nextConversations.length === 0) return validCurrent;
+        return nextConversations.slice(0, 5).map((item) => item.id);
+      });
+      return;
+    }
+
+    await clearScannedConversationCache(sourceTabId);
+    setConversations([]);
+    setSelectedIds([]);
+  }
+
   async function refreshPageContext() {
     if (sourceTabId) {
       const tab = await chrome.tabs.get(sourceTabId);
-      setActiveSite(detectSupportedSiteFromUrl(tab.url) ?? 'chatgpt');
-      const permission = await hasSitePermissionForUrl(tab.url);
+      const nextUrl = tab.url ?? null;
+      const detectedSite = detectSupportedSiteFromUrl(nextUrl) ?? 'chatgpt';
+      setSourceUrl(nextUrl);
+      setSourceSite(detectedSite);
+      setActiveSite(detectedSite);
+      const permission = await hasSitePermissionForUrl(nextUrl);
       setPermissionGranted(permission.granted);
+      const cache = await getScannedConversationCache(sourceTabId);
+      await syncFromCache(cache, detectedSite);
+      setScanMessage(translate(language, 'scanPopulate'));
     }
-    setScanMessage(translate(language, 'scanPopulate'));
     await refreshHistoryAndJobs();
+  }
+
+  async function getCurrentStatus() {
+    if (!sourceTabId) return null;
+    const response = await callRuntime({ type: 'GET_ACTIVE_SITE_STATUS', sourceTabId });
+    if (response.ok && 'status' in response) return response.status;
+    if (!response.ok) throw new Error(response.error);
+    return null;
   }
 
   async function refreshHistoryAndJobs() {
@@ -116,47 +204,33 @@ export function DashboardApp() {
   }
 
   async function ensurePermissions(needTabs = false) {
-    if (!sourceTabId) {
+    if (!sourceTabId || !sourceUrl) {
       failProgress(translate(language, 'sourceTabMissing'));
       return false;
     }
 
     markStep(14, isZh ? '正在检查当前站点权限...' : 'Checking current site permission...');
-    const tab = await chrome.tabs.get(sourceTabId);
-    const currentPermission = await hasSitePermissionForUrl(tab.url);
-    if (!currentPermission.granted) {
-      markStep(22, isZh ? '正在申请当前站点权限...' : 'Requesting current site permission...');
-      const requested = await requestSitePermissionForUrl(tab.url);
+    if (!permissionGranted || needTabs) {
+      markStep(22, needTabs ? (isZh ? '正在申请站点和批量导出权限...' : 'Requesting site and batch export permissions...') : (isZh ? '正在申请当前站点权限...' : 'Requesting current site permission...'));
+      const requested = await requestPermissionsForUrl(sourceUrl, { tabs: needTabs });
       setPermissionGranted(requested.granted);
       if (!requested.granted) {
-        failProgress(isZh ? '当前站点权限未授权，流程已停止。' : 'Current site permission was not granted. The flow stopped.');
+        failProgress(needTabs ? (isZh ? '当前流程需要站点与 tabs 权限，授权未完成。' : 'This flow needs site and tabs permissions, but the request was not granted.') : (isZh ? '当前站点权限未授权，流程已停止。' : 'Current site permission was not granted. The flow stopped.'));
         return false;
       }
     }
 
     setPermissionGranted(true);
-    markStep(30, isZh ? '站点权限已确认。' : 'Site permission confirmed.');
-
-    if (needTabs) {
-      markStep(38, isZh ? '正在检查批量导出权限...' : 'Checking batch export permission...');
-      const tabsGranted = await requestTabsPermission();
-      if (!tabsGranted) {
-        failProgress(isZh ? '批量导出需要 tabs 权限。' : 'Batch export needs tabs permission.');
-        return false;
-      }
-      markStep(46, isZh ? '批量导出权限已确认。' : 'Batch export permission confirmed.');
-    }
-
+    markStep(needTabs ? 46 : 30, needTabs ? (isZh ? '站点和批量导出权限已确认。' : 'Site and batch export permissions confirmed.') : (isZh ? '站点权限已确认。' : 'Site permission confirmed.'));
     return true;
   }
 
   async function handleGrantPermission() {
-    if (!sourceTabId) return;
+    if (!sourceTabId || !sourceUrl || !currentSiteMatches) return;
     startProgress(isZh ? '正在申请当前站点权限...' : 'Requesting current site permission...');
     setBusy(true);
     try {
-      const tab = await chrome.tabs.get(sourceTabId);
-      const permission = await requestSitePermissionForUrl(tab.url);
+      const permission = await requestPermissionsForUrl(sourceUrl);
       setPermissionGranted(permission.granted);
       if (permission.granted) {
         completeProgress(isZh ? '当前站点权限已授权。' : 'Current site permission granted.');
@@ -168,6 +242,52 @@ export function DashboardApp() {
     } finally {
       setBusy(false);
       await refreshPageContext();
+    }
+  }
+
+  async function handleCurrentExport() {
+    if (!sourceTabId || !currentSiteMatches) return;
+    startProgress(translate(language, 'exportingCurrentAs', { format: format.toUpperCase() }));
+    setBusy(true);
+
+    try {
+      const status = await getCurrentStatus();
+      const needsFallback = !status?.canExportCurrentConversation;
+      if (!(await ensurePermissions(needsFallback))) return;
+
+      if (!needsFallback) {
+        markStep(56, isZh ? '正在抓取当前会话内容...' : 'Capturing current conversation...');
+        const response = await callRuntime({ type: 'EXPORT_CURRENT_CONVERSATION', sourceTabId, format });
+        if (response.ok && 'conversation' in response) {
+          markStep(92, isZh ? '导出内容已生成，正在落盘...' : 'Export artifact generated. Saving file...');
+          completeProgress(translate(language, 'exportedConversation', { title: response.conversation.title }));
+          await refreshHistoryAndJobs();
+          return;
+        }
+        failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
+        return;
+      }
+
+      const scanned = conversations.length > 0 ? conversations : await scanConversations('default', true);
+      const fallback = scanned[0];
+      if (!fallback) {
+        failProgress(isZh ? '没有找到可回退导出的会话。' : 'No fallback conversation was found.');
+        return;
+      }
+
+      markStep(78, isZh ? `当前页面是新对话，改为导出首条会话：${fallback.title}` : `This is a new-chat page. Exporting the first conversation instead: ${fallback.title}`);
+      const response = await callRuntime({ type: 'EXPORT_CONVERSATION_FROM_SUMMARY', sourceTabId, format, summary: fallback });
+      if (response.ok && 'conversation' in response) {
+        markStep(94, isZh ? '导出内容已生成，正在落盘...' : 'Export artifact generated. Saving file...');
+        completeProgress(translate(language, 'exportedConversation', { title: response.conversation.title }));
+        await refreshHistoryAndJobs();
+      } else {
+        failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
+      }
+    } catch (exportError) {
+      failProgress(exportError instanceof Error ? exportError.message : (isZh ? '导出失败。' : 'Export failed.'));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -189,23 +309,35 @@ export function DashboardApp() {
     }
   }
 
+  async function scanConversations(kind: 'default' | 'team' = 'default', autoMode = false): Promise<ConversationSummary[]> {
+    if (!sourceTabId) return [];
+    markStep(56, autoMode
+      ? (isZh ? '当前页面不是会话详情，正在改为扫描会话列表...' : 'This page is not a conversation detail view. Scanning the conversation list instead...')
+      : kind === 'team'
+        ? (isZh ? '正在读取 Team 工作空间会话...' : 'Reading Team workspace conversations...')
+        : translate(language, 'scanningConversationList'));
+
+    const response = await callRuntime({ type: 'SCAN_CONVERSATIONS', sourceTabId });
+    if (!(response.ok && 'conversations' in response)) {
+      throw new Error(response.ok ? translate(language, 'unknownScanResponse') : response.error);
+    }
+
+    setConversations(response.conversations);
+    setSelectedIds(response.conversations.slice(0, 5).map((item) => item.id));
+    await setScannedConversationCache(sourceTabId, sourceSite, response.conversations);
+    return response.conversations;
+  }
+
   async function handleScan(kind: 'default' | 'team' = 'default') {
-    if (activeSite !== 'chatgpt') return;
+    if (!supportsBatch) return;
     startProgress(kind === 'team' ? (isZh ? '正在准备扫描 ChatGPT Team 工作空间...' : 'Preparing to scan the ChatGPT Team workspace...') : translate(language, 'scanningSidebar'));
     setBusy(true);
 
     try {
       if (!(await ensurePermissions())) return;
-      markStep(56, kind === 'team' ? (isZh ? '正在读取 Team 工作空间会话...' : 'Reading Team workspace conversations...') : (isZh ? '正在读取 ChatGPT 侧边栏会话...' : 'Reading ChatGPT sidebar conversations...'));
-      const response = await callRuntime({ type: 'SCAN_CONVERSATIONS', sourceTabId });
-      if (response.ok && 'conversations' in response) {
-        setConversations(response.conversations);
-        setSelectedIds(response.conversations.slice(0, 5).map((item) => item.id));
-        markStep(88, isZh ? `已识别 ${response.conversations.length} 个会话。` : `Recognized ${response.conversations.length} conversations.`);
-        completeProgress(kind === 'team' ? (isZh ? `Team 工作空间扫描完成，共找到 ${response.conversations.length} 个会话。` : `Team workspace scan complete. Found ${response.conversations.length} conversations.`) : translate(language, 'foundConversationsPreset', { count: response.conversations.length }));
-      } else {
-        failProgress(response.ok ? translate(language, 'unknownScanResponse') : response.error);
-      }
+      const scanned = await scanConversations(kind, false);
+      markStep(88, isZh ? `已识别 ${scanned.length} 个会话。` : `Recognized ${scanned.length} conversations.`);
+      completeProgress(kind === 'team' ? (isZh ? `Team 工作空间扫描完成，共找到 ${scanned.length} 个会话。` : `Team workspace scan complete. Found ${scanned.length} conversations.`) : translate(language, 'foundConversationsPreset', { count: scanned.length }));
     } catch (scanError) {
       failProgress(scanError instanceof Error ? scanError.message : (isZh ? '扫描失败。' : 'Scan failed.'));
     } finally {
@@ -214,7 +346,7 @@ export function DashboardApp() {
   }
 
   async function handleBatchExport(selectedOverride?: ConversationSummary[]) {
-    if (activeSite !== 'chatgpt') return;
+    if (!supportsBatch) return;
     const selected = selectedOverride ?? conversations.filter((item) => selectedIds.includes(item.id));
     startProgress(translate(language, 'exportingSelectedAs', { count: selected.length, format: format.toUpperCase() }));
     setBusy(true);
@@ -256,12 +388,24 @@ export function DashboardApp() {
   }
 
   async function handleOpenDownload(item: ExportHistoryRecord, mode: 'file' | 'folder') {
-    if (!item.downloadId) return;
-    if (mode === 'file') {
-      await chrome.downloads.open(item.downloadId);
+    if (!item.downloadId) {
+      failProgress(isZh ? '当前导出记录没有可用的下载任务编号。' : 'This export record does not have a usable download id.');
       return;
     }
-    await chrome.downloads.show(item.downloadId);
+
+    const response = await callRuntime({
+      type: mode === 'file' ? 'OPEN_DOWNLOAD_FILE' : 'OPEN_DOWNLOAD_FOLDER',
+      downloadId: item.downloadId
+    });
+
+    if (!response.ok) {
+      failProgress(response.error);
+      return;
+    }
+
+    pushLog(mode === 'file'
+      ? (isZh ? '已请求系统打开文件。' : 'Requested the system to open the file.')
+      : (isZh ? '已请求系统打开所在位置。' : 'Requested the system to reveal the file.'), 'success');
   }
 
   function toggleSelectAll() {
@@ -275,11 +419,12 @@ export function DashboardApp() {
   }), [jobs]);
 
   const allSelected = conversations.length > 0 && selectedIds.length === conversations.length;
-  const isSupportedSite = activeSite === 'chatgpt';
+  const selectedSiteLabel = siteOptions.find((site) => site.value === activeSite)?.label ?? activeSite;
+  const sourceSiteLabel = siteOptions.find((site) => site.value === sourceSite)?.label ?? sourceSite;
 
   return (
-    <main className="min-h-screen bg-transparent px-6 py-8 text-ink">
-      <div className="mx-auto max-w-6xl rounded-[36px] border border-white/70 bg-white/85 p-8 shadow-panel backdrop-blur">
+    <main className="min-h-screen overflow-x-hidden bg-transparent px-6 py-8 text-ink">
+      <div className="mx-auto max-w-6xl overflow-hidden rounded-[36px] border border-white/70 bg-white/85 p-8 shadow-panel backdrop-blur">
         <section className="rounded-[28px] bg-[radial-gradient(circle_at_top_left,_rgba(230,126,34,0.22),_transparent_28%),linear-gradient(135deg,_#10233b,_#1e3556)] p-8 text-white">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-start gap-4">
@@ -311,148 +456,157 @@ export function DashboardApp() {
           </div>
         </section>
 
-        {!isSupportedSite ? (
-          <section className="mt-8 rounded-[28px] border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
-            {isZh ? `${siteOptions.find((item) => item.value === activeSite)?.label} 页面和导出入口已预留，适配器还在开发中。` : `${siteOptions.find((item) => item.value === activeSite)?.label} page and export entry are reserved. The adapter is still in progress.`}
-          </section>
-        ) : (
-          <div className="mt-8 grid gap-8 xl:grid-cols-[1.2fr_0.8fr]">
-            <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.28em] text-tide">{translate(language, 'conversationScan')}</p>
-                  <h2 className="mt-2 text-2xl font-semibold">{translate(language, 'selectWhatToExport')}</h2>
-                </div>
+        <div className="mt-8 grid min-w-0 gap-8 xl:grid-cols-[1.2fr_0.8fr]">
+          <section className="min-w-0 rounded-[28px] border border-slate-200 bg-slate-50 p-6">
+            {!currentSiteMatches ? (
+              <div className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                {isZh ? `当前源标签页是 ${sourceSiteLabel}，不是 ${selectedSiteLabel}。请先切到对应平台页面，再执行导出。` : `The source tab is ${sourceSiteLabel}, not ${selectedSiteLabel}. Switch to a matching page before exporting.`}
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.28em] text-tide">{translate(language, 'conversationScan')}</p>
+                <h2 className="mt-2 text-2xl font-semibold">{translate(language, 'selectWhatToExport')}</h2>
+              </div>
+              {supportsBatch ? (
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => void handleScan('default')} disabled={busy} className="rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'working') : translate(language, 'scanChatGptSidebar')}</button>
-                  <button type="button" onClick={() => void handleScan('team')} disabled={busy} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{isZh ? '扫描 Team 工作空间' : 'Scan Team workspace'}</button>
+                  <button type="button" onClick={() => void handleScan('default')} disabled={busy} className="rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'working') : translate(language, 'scanConversationList')}</button>
+                  {supportsTeamWorkspace ? <button type="button" onClick={() => void handleScan('team')} disabled={busy} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{isZh ? '扫描 Team 工作空间' : 'Scan Team workspace'}</button> : null}
                 </div>
-              </div>
-
-              {!permissionGranted ? (
-                <button type="button" onClick={() => void handleGrantPermission()} disabled={busy || !sourceTabId} className="mt-4 w-full rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:bg-slate-100">
-                  {isZh ? '先授权当前站点' : 'Grant current site first'}
-                </button>
               ) : null}
+            </div>
 
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-medium text-slate-800">{isZh ? '执行进度' : 'Execution progress'}</div>
-                  <div className="text-xs text-slate-500">{progress}%</div>
-                </div>
-                <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-200">
-                  <div className="h-full rounded-full bg-amber-500 transition-all duration-300" style={{ width: `${progress}%` }} />
-                </div>
-                <div className="mt-3 max-h-36 overflow-auto rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                  {logs.length === 0 ? (
-                    <div>{isZh ? '点击扫描或导出后，这里会持续显示每一步：权限、扫描、抓取、导出、落盘。' : 'After you click scan or export, each step will appear here: permission, scan, capture, export, save.'}</div>
-                  ) : (
-                    <ul className="space-y-1.5">
-                      {logs.map((item) => (
-                        <li key={item.id} className={item.level === 'error' ? 'text-red-600' : item.level === 'success' ? 'text-emerald-700' : 'text-slate-600'}>{item.text}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+            {!permissionGranted ? (
+              <button type="button" onClick={() => void handleGrantPermission()} disabled={busy || !sourceTabId || !currentSiteMatches} className="mt-4 w-full rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:bg-slate-100">
+                {isZh ? '先授权当前站点' : 'Grant current site first'}
+              </button>
+            ) : null}
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-slate-800">{isZh ? '执行进度' : 'Execution progress'}</div>
+                <div className="text-xs text-slate-500">{progress}%</div>
               </div>
-
-              <p className="mt-4 text-sm text-slate-600">{scanMessage}</p>
-              {error ? <p className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
-
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                {exportFormats.map((item) => (
-                  <button key={item.value} type="button" onClick={() => setFormat(item.value)} className={`rounded-2xl border px-4 py-3 text-left transition ${format === item.value ? 'border-ink bg-ink text-white' : 'border-slate-200 bg-white hover:border-slate-400'}`}>
-                    <div className="text-sm font-medium">{item.value === 'zip' ? translate(language, 'fullBundle') : item.label}</div>
-                    <div className={`mt-1 text-xs ${format === item.value ? 'text-slate-200' : 'text-slate-500'}`}>{item.value === 'zip' ? translate(language, 'eachConversationBundle') : translate(language, 'packedIntoOneZip')}</div>
-                  </button>
-                ))}
+              <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-200">
+                <div className="h-full rounded-full bg-amber-500 transition-all duration-300" style={{ width: `${progress}%` }} />
               </div>
-
-              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
-                <span>{translate(language, 'scannedCount', { count: conversations.length })}</span>
-                <div className="flex gap-2 items-center">
-                  <span>{translate(language, 'selectedCount', { count: selectedIds.length })}</span>
-                  <button type="button" onClick={toggleSelectAll} className="rounded-full border border-slate-300 px-3 py-1 text-xs text-slate-700 hover:bg-slate-100">{allSelected ? (isZh ? '取消全选' : 'Clear all') : (isZh ? '全选聊天' : 'Select all')}</button>
-                </div>
-              </div>
-
-              <div className="mt-4 max-h-[440px] overflow-auto rounded-3xl border border-slate-200 bg-white">
-                {conversations.length === 0 ? <div className="px-5 py-10 text-sm text-slate-500">{translate(language, 'noConversationsScanned')}</div> : (
-                  <ul className="divide-y divide-slate-200">
-                    {conversations.map((item) => {
-                      const selected = selectedIds.includes(item.id);
-                      return (
-                        <li key={item.id} className="px-5 py-4">
-                          <label className="flex cursor-pointer items-start gap-3">
-                            <input type="checkbox" checked={selected} onChange={() => toggleConversation(item.id)} className="mt-1 h-4 w-4 rounded border-slate-300 text-ink" />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="truncate text-sm font-medium text-slate-900">{item.title}</span>
-                                {item.isActive ? <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] uppercase text-amber-900">{translate(language, 'current')}</span> : null}
-                              </div>
-                              <p className="mt-1 truncate text-xs text-slate-500">{item.url}</p>
-                            </div>
-                          </label>
-                        </li>
-                      );
-                    })}
+              <div className="mt-3 max-h-36 overflow-auto rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                {logs.length === 0 ? (
+                  <div>{isZh ? '点击扫描或导出后，这里会持续显示每一步：权限、扫描、抓取、导出、落盘。' : 'After you click scan or export, each step will appear here: permission, scan, capture, export, save.'}</div>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {logs.map((item) => (
+                      <li key={item.id} className={item.level === 'error' ? 'text-red-600' : item.level === 'success' ? 'text-emerald-700' : 'text-slate-600'}>{item.text}</li>
+                    ))}
                   </ul>
                 )}
               </div>
+            </div>
 
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <button type="button" onClick={() => void handleBatchExport()} disabled={busy || selectedIds.length === 0} className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'exportingBatch') : translate(language, 'exportSelectedConversations')}</button>
-                <button type="button" onClick={() => void handleBatchExport(conversations)} disabled={busy || conversations.length === 0} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{isZh ? '导出全部聊天' : 'Export all chats'}</button>
+            <p className="mt-4 text-sm text-slate-600">{scanMessage}</p>
+            {error ? <p className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              {exportFormats.map((item) => (
+                <button key={item.value} type="button" onClick={() => setFormat(item.value)} className={`rounded-2xl border px-4 py-3 text-left transition ${format === item.value ? 'border-ink bg-ink text-white' : 'border-slate-200 bg-white hover:border-slate-400'}`}>
+                  <div className="text-sm font-medium">{item.value === 'zip' ? translate(language, 'fullBundle') : item.label}</div>
+                  <div className={`mt-1 text-xs ${format === item.value ? 'text-slate-200' : 'text-slate-500'}`}>{item.value === 'zip' ? translate(language, 'eachConversationBundle') : translate(language, 'packedIntoOneZip')}</div>
+                </button>
+              ))}
+            </div>
+
+            {!supportsBatch ? (
+              <div className="mt-5">
+                <button type="button" onClick={() => void handleCurrentExport()} disabled={busy || !sourceTabId || !currentSiteMatches} className="w-full rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'working') : translate(language, 'exportCurrentConversation')}</button>
+              </div>
+            ) : (
+              <>
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
+                  <span>{translate(language, 'scannedCount', { count: conversations.length })}</span>
+                  <div className="flex gap-2 items-center">
+                    <span>{translate(language, 'selectedCount', { count: selectedIds.length })}</span>
+                    <button type="button" onClick={toggleSelectAll} className="rounded-full border border-slate-300 px-3 py-1 text-xs text-slate-700 hover:bg-slate-100">{allSelected ? (isZh ? '取消全选' : 'Clear all') : (isZh ? '全选聊天' : 'Select all')}</button>
+                  </div>
+                </div>
+
+                <div className="mt-4 max-h-[440px] overflow-x-hidden overflow-y-auto rounded-3xl border border-slate-200 bg-white">
+                  {conversations.length === 0 ? <div className="px-5 py-10 text-sm text-slate-500">{translate(language, 'noConversationsScanned')}</div> : (
+                    <ul className="divide-y divide-slate-200">
+                      {conversations.map((item) => {
+                        const selected = selectedIds.includes(item.id);
+                        return (
+                          <li key={item.id} className="px-5 py-4">
+                            <label className="flex cursor-pointer items-start gap-3">
+                              <input type="checkbox" checked={selected} onChange={() => toggleConversation(item.id)} className="mt-1 h-4 w-4 rounded border-slate-300 text-ink" />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="truncate text-sm font-medium text-slate-900">{item.title}</span>
+                                  {item.isActive ? <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] uppercase text-amber-900">{translate(language, 'current')}</span> : null}
+                                </div>
+                                <p className="mt-1 truncate text-xs text-slate-500">{item.url}</p>
+                              </div>
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <button type="button" onClick={() => void handleCurrentExport()} disabled={busy || !sourceTabId || !currentSiteMatches} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{busy ? translate(language, 'working') : translate(language, 'exportCurrentConversation')}</button>
+                  <button type="button" onClick={() => void handleBatchExport()} disabled={busy || selectedIds.length === 0 || !currentSiteMatches} className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'exportingBatch') : translate(language, 'exportSelectedConversations')}</button>
+                  <button type="button" onClick={() => void handleBatchExport(conversations)} disabled={busy || conversations.length === 0 || !currentSiteMatches} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{translate(language, 'exportAllConversations')}</button>
+                </div>
+              </>
+            )}
+          </section>
+
+          <div className="grid gap-8">
+            <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
+              <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{translate(language, 'recentJobs')}</h2><span className="text-sm text-slate-500">{jobs.length}</span></div>
+              <div className="mt-4 space-y-3">
+                {jobs.length === 0 ? <div className="rounded-2xl bg-white px-4 py-5 text-sm text-slate-500">{translate(language, 'noJobsYet')}</div> : jobs.slice(0, 8).map((item) => (
+                  <div key={item.id} className="rounded-2xl bg-white px-4 py-4">
+                    <div className="flex items-center justify-between gap-3"><div className="truncate text-sm font-medium text-slate-900">{item.title}</div><span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] uppercase text-slate-700">{item.status}</span></div>
+                    <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500"><span>{item.format}</span><span>{new Date(item.updatedAt).toLocaleString()}</span></div>
+                    {item.error ? <p className="mt-2 text-xs text-red-600">{item.error}</p> : null}
+                  </div>
+                ))}
               </div>
             </section>
 
-            <div className="grid gap-8">
-              <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
-                <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{translate(language, 'recentJobs')}</h2><span className="text-sm text-slate-500">{jobs.length}</span></div>
-                <div className="mt-4 space-y-3">
-                  {jobs.length === 0 ? <div className="rounded-2xl bg-white px-4 py-5 text-sm text-slate-500">{translate(language, 'noJobsYet')}</div> : jobs.slice(0, 8).map((item) => (
-                    <div key={item.id} className="rounded-2xl bg-white px-4 py-4">
-                      <div className="flex items-center justify-between gap-3"><div className="truncate text-sm font-medium text-slate-900">{item.title}</div><span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] uppercase text-slate-700">{item.status}</span></div>
-                      <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500"><span>{item.format}</span><span>{new Date(item.updatedAt).toLocaleString()}</span></div>
-                      {item.error ? <p className="mt-2 text-xs text-red-600">{item.error}</p> : null}
+            <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
+              <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{translate(language, 'downloadedArchives')}</h2><span className="text-sm text-slate-500">{history.length}</span></div>
+              <p className="mt-2 text-xs text-slate-500">{translate(language, 'browserDownloadNote')}</p>
+              <div className="mt-4 space-y-3">
+                {history.length === 0 ? <div className="rounded-2xl bg-white px-4 py-5 text-sm text-slate-500">{translate(language, 'noExportsYet')}</div> : history.slice(0, 8).map((item) => (
+                  <div key={item.id} className="rounded-2xl bg-white px-4 py-4">
+                    <div className="truncate text-sm font-medium text-slate-900">{item.title}</div>
+                    <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500"><span>{item.filename}</span><span>{new Date(item.createdAt).toLocaleString()}</span></div>
+
+                    <div className="mt-2 text-xs text-slate-500">
+                      <span className="font-medium text-slate-700">{translate(language, 'savedAs')}:</span>{' '}
+                      <span className="break-all">{item.savedAs ?? translate(language, 'unavailableDownloadPath')}</span>
                     </div>
-                  ))}
-                </div>
-              </section>
-
-              <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
-                <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{translate(language, 'downloadedArchives')}</h2><span className="text-sm text-slate-500">{history.length}</span></div>
-                <p className="mt-2 text-xs text-slate-500">{translate(language, 'browserDownloadNote')}</p>
-                <div className="mt-4 space-y-3">
-                  {history.length === 0 ? <div className="rounded-2xl bg-white px-4 py-5 text-sm text-slate-500">{translate(language, 'noExportsYet')}</div> : history.slice(0, 8).map((item) => (
-                    <div key={item.id} className="rounded-2xl bg-white px-4 py-4">
-                      <div className="truncate text-sm font-medium text-slate-900">{item.title}</div>
-                      <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500"><span>{item.filename}</span><span>{new Date(item.createdAt).toLocaleString()}</span></div>
-
-                      <div className="mt-2 text-xs text-slate-500">
-                        <span className="font-medium text-slate-700">{translate(language, 'savedAs')}:</span>{' '}
-                        <span className="break-all">{item.savedAs ?? translate(language, 'unavailableDownloadPath')}</span>
+                    {item.downloadId ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button type="button" onClick={() => void handleOpenDownload(item, 'file')} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100">
+                          {translate(language, 'openFile')}
+                        </button>
+                        <button type="button" onClick={() => void handleOpenDownload(item, 'folder')} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100">
+                          {translate(language, 'openFolder')}
+                        </button>
                       </div>
-                      {item.downloadId ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button type="button" onClick={() => void handleOpenDownload(item, 'file')} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100">
-                            {translate(language, 'openFile')}
-                          </button>
-                          <button type="button" onClick={() => void handleOpenDownload(item, 'folder')} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100">
-                            {translate(language, 'openFolder')}
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </section>
           </div>
-        )}
+        </div>
       </div>
     </main>
   );
 }
-
-

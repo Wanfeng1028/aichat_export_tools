@@ -1,9 +1,26 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
+import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib';
+import dengRegularUrl from '../../assets/fonts/Deng-Regular.ttf';
+import dengBoldUrl from '../../assets/fonts/Deng-Bold.ttf';
 import type { ChatConversation, ExportArtifact } from '../core/types';
 import { buildConversationFilenameFromSettings } from '../core/filename';
 import { buildConversationSections, buildConversationSummary } from './shared';
 
-function wrapText(text: string, maxChars: number): string[] {
+async function loadFontBytes(url: string): Promise<Uint8Array> {
+  const resolvedUrl = typeof globalThis.location?.href === 'string' ? new URL(url, globalThis.location.href).toString() : url;
+  const response = await fetch(resolvedUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to load PDF font asset: ${response.status}`);
+  }
+
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+function splitForWrap(text: string): string[] {
+  return text.match(/[A-Za-z0-9_:/.@#%+\-=]+|\s+|./gu) ?? [];
+}
+
+function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
   const normalized = text.replace(/\r/g, '');
   const lines: string[] = [];
 
@@ -14,36 +31,55 @@ function wrapText(text: string, maxChars: number): string[] {
     }
 
     let current = '';
-    for (const word of paragraph.split(/\s+/)) {
-      const candidate = current ? `${current} ${word}` : word;
-      if (candidate.length > maxChars) {
-        if (current) {
-          lines.push(current);
-        }
-        current = word;
+    for (const token of splitForWrap(paragraph)) {
+      const candidate = `${current}${token}`;
+      if (current && font.widthOfTextAtSize(candidate, size) > maxWidth) {
+        lines.push(current.trimEnd());
+        current = token.trimStart();
       } else {
         current = candidate;
       }
     }
 
     if (current) {
-      lines.push(current);
+      lines.push(current.trimEnd());
     }
   }
 
   return lines;
 }
 
+async function resolvePdfFonts(pdf: PDFDocument): Promise<{ font: PDFFont; boldFont: PDFFont }> {
+  pdf.registerFontkit(fontkit);
+
+  try {
+    const [regularFontBytes, boldFontBytes] = await Promise.all([
+      loadFontBytes(dengRegularUrl),
+      loadFontBytes(dengBoldUrl)
+    ]);
+
+    return {
+      font: await pdf.embedFont(regularFontBytes, { subset: false }),
+      boldFont: await pdf.embedFont(boldFontBytes, { subset: false })
+    };
+  } catch {
+    return {
+      font: await pdf.embedFont(StandardFonts.Helvetica),
+      boldFont: await pdf.embedFont(StandardFonts.HelveticaBold)
+    };
+  }
+}
+
 export async function exportConversationToPdf(conversation: ChatConversation): Promise<ExportArtifact> {
   const pdf = await PDFDocument.create();
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const boldFont = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const { font, boldFont } = await resolvePdfFonts(pdf);
 
   let page = pdf.addPage([595.28, 841.89]);
   const pageWidth = page.getWidth();
   const pageHeight = page.getHeight();
   const margin = 48;
   const lineHeight = 16;
+  const maxTextWidth = pageWidth - margin * 2;
   let cursorY = pageHeight - margin;
 
   const ensureSpace = (requiredHeight: number) => {
@@ -53,32 +89,35 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
     }
   };
 
-  const drawLine = (text: string, size = 11, isBold = false, color = rgb(0.1, 0.15, 0.2)) => {
-    ensureSpace(lineHeight + 4);
-    page.drawText(text, {
-      x: margin,
-      y: cursorY,
-      size,
-      font: isBold ? boldFont : font,
-      color
-    });
-    cursorY -= lineHeight;
+  const drawWrapped = (text: string, size = 11, isBold = false, color = rgb(0.1, 0.15, 0.2)) => {
+    const activeFont = isBold ? boldFont : font;
+    const lines = wrapText(text, activeFont, size, maxTextWidth);
+
+    for (const line of lines) {
+      ensureSpace(lineHeight + 4);
+      page.drawText(line || ' ', {
+        x: margin,
+        y: cursorY,
+        size,
+        font: activeFont,
+        color
+      });
+      cursorY -= lineHeight;
+    }
   };
 
-  drawLine(conversation.title, 20, true);
+  drawWrapped(conversation.title, 20, true);
   cursorY -= 8;
 
   for (const line of buildConversationSummary(conversation)) {
-    drawLine(line, 10, false, rgb(0.35, 0.4, 0.47));
+    drawWrapped(line, 10, false, rgb(0.35, 0.4, 0.47));
   }
 
   cursorY -= 8;
 
   for (const section of buildConversationSections(conversation)) {
-    drawLine(section.heading, 13, true, rgb(0.9, 0.45, 0.13));
-    for (const line of wrapText(section.body, 80)) {
-      drawLine(line || ' ', 11);
-    }
+    drawWrapped(section.heading, 13, true, rgb(0.9, 0.45, 0.13));
+    drawWrapped(section.body, 11);
     cursorY -= 10;
   }
 
@@ -90,4 +129,3 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
     content
   };
 }
-

@@ -11,5 +11,8 @@ export const SUPPORTED_SITE_LABELS: Record<SupportedSite, string> = {
   gemini: 'Gemini',
   kimi: 'Kimi',
   deepseek: 'DeepSeek',
-  grok: 'Grok'
+  grok: 'Grok',
+  doubao: '豆包',
+  qianwen: '千问',
+  yiyan: '文心一言'
 };

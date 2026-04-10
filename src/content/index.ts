@@ -1,4 +1,5 @@
 import { createChatGptAdapter } from '../adapters/chatgpt';
+import { createGenericSiteAdapter } from '../adapters/generic';
 import { createLogger } from '../core/logger';
 
 const logger = createLogger('content');
@@ -9,12 +10,33 @@ type ContentErrorResponse = { __contentError: string };
 
 type ToggleResponse = { ok: true; open: boolean };
 
+function detectSupportedSiteFromUrl(url?: string | null) {
+  if (!url) return null;
+  try {
+    const hostname = new URL(url).hostname;
+    if (hostname.includes('chatgpt.com')) return 'chatgpt';
+    if (hostname.includes('claude.ai')) return 'claude';
+    if (hostname.includes('gemini.google.com')) return 'gemini';
+    if (hostname.includes('kimi.moonshot.cn') || hostname === 'kimi.com' || hostname === 'www.kimi.com') return 'kimi';
+    if (hostname.includes('chat.deepseek.com')) return 'deepseek';
+    if (hostname.includes('grok.com') || hostname.includes('x.com')) return 'grok';
+    if (hostname.includes('doubao.com')) return 'doubao';
+    if (hostname.includes('tongyi.aliyun.com') || hostname.includes('qianwen.aliyun.com') || hostname === 'tongyi.com' || hostname === 'www.tongyi.com' || hostname === 'qwen.ai' || hostname === 'www.qwen.ai') return 'qianwen';
+    if (hostname.includes('yiyan.baidu.com') || hostname.includes('wenxin.baidu.com')) return 'yiyan';
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function getAdapter() {
-  if (globalThis.location.hostname.includes('chatgpt.com')) {
+  const site = detectSupportedSiteFromUrl(globalThis.location.href);
+
+  if (site === 'chatgpt') {
     return createChatGptAdapter();
   }
 
-  return null;
+  return site ? createGenericSiteAdapter(site) : null;
 }
 
 function toErrorResponse(error: unknown): ContentErrorResponse {
@@ -81,10 +103,10 @@ function createFloatingPanel(sourceTabId?: number): HTMLElement {
   const root = document.createElement('div');
   root.id = FLOATING_ROOT_ID;
   root.style.position = 'fixed';
-  root.style.top = '84px';
-  root.style.right = '24px';
+  root.style.top = '12px';
+  root.style.right = '12px';
   root.style.width = '520px';
-  root.style.height = 'min(920px, calc(100vh - 96px))';
+  root.style.height = 'min(920px, calc(100vh - 24px))';
   root.style.zIndex = '2147483647';
   root.style.borderRadius = '24px';
   root.style.overflow = 'hidden';
@@ -118,7 +140,7 @@ function createFloatingPanel(sourceTabId?: number): HTMLElement {
 
   const minimizeButton = document.createElement('button');
   minimizeButton.type = 'button';
-  minimizeButton.textContent = '−';
+  minimizeButton.textContent = '-';
   minimizeButton.style.width = '28px';
   minimizeButton.style.height = '28px';
   minimizeButton.style.border = '0';
@@ -131,7 +153,7 @@ function createFloatingPanel(sourceTabId?: number): HTMLElement {
 
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
-  closeButton.textContent = '×';
+  closeButton.textContent = 'x';
   closeButton.style.width = '28px';
   closeButton.style.height = '28px';
   closeButton.style.border = '0';
@@ -158,8 +180,8 @@ function createFloatingPanel(sourceTabId?: number): HTMLElement {
   minimizeButton.addEventListener('click', () => {
     minimized = !minimized;
     body.style.display = minimized ? 'none' : 'block';
-    root.style.height = minimized ? '48px' : 'min(920px, calc(100vh - 96px))';
-    minimizeButton.textContent = minimized ? '+' : '−';
+    root.style.height = minimized ? '48px' : 'min(920px, calc(100vh - 24px))';
+    minimizeButton.textContent = minimized ? '+' : '-';
   });
 
   closeButton.addEventListener('click', () => {
@@ -196,7 +218,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
   if (!adapter) {
     sendResponse({
-      site: 'chatgpt',
+      site: detectSupportedSiteFromUrl(globalThis.location.href) ?? 'chatgpt',
       supported: false,
       loggedIn: false,
       canExportCurrentConversation: false,

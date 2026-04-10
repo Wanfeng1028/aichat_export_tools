@@ -1,5 +1,6 @@
 import { BaseAdapter } from '../shared/base';
 import type { AdapterStatus, ChatConversation, ConversationSummary } from '../../core/types';
+import { fetchConversationFromApi, fetchConversationListFromApi } from './api';
 import { parseChatGptConversation, scanChatGptConversationList } from './parser';
 import { chatGptSelectors } from './selectors';
 
@@ -9,6 +10,11 @@ function delay(ms: number): Promise<void> {
 
 function hasConversationPath(pathname: string): boolean {
   return /\/(c|g|share)\//.test(pathname);
+}
+
+function getConversationPathId(pathname: string): string | null {
+  const match = pathname.match(/\/(c|g|share)\/([^/?#]+)/);
+  return match?.[2] ?? null;
 }
 
 export class ChatGptAdapter extends BaseAdapter {
@@ -35,8 +41,22 @@ export class ChatGptAdapter extends BaseAdapter {
   }
 
   async exportCurrentConversation(): Promise<ChatConversation> {
-    let lastConversation: ChatConversation | null = null;
+    const conversationId = getConversationPathId(globalThis.location.pathname);
+    if (conversationId) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const conversation = await fetchConversationFromApi(conversationId);
+          if (conversation && conversation.messages.length > 0) {
+            return conversation;
+          }
+        } catch {
+          // Fall back to DOM extraction below.
+        }
+        await delay(400 + attempt * 200);
+      }
+    }
 
+    let lastConversation: ChatConversation | null = null;
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const conversation = parseChatGptConversation();
       lastConversation = conversation;
@@ -51,6 +71,20 @@ export class ChatGptAdapter extends BaseAdapter {
   }
 
   async scanConversationList(): Promise<ConversationSummary[]> {
+    const activeConversationId = getConversationPathId(globalThis.location.pathname);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const conversations = await fetchConversationListFromApi(activeConversationId);
+        if (conversations.length > 0) {
+          return conversations;
+        }
+      } catch {
+        // Fall back to DOM extraction below.
+      }
+      await delay(300 + attempt * 200);
+    }
+
     let conversations = scanChatGptConversationList();
     for (let attempt = 0; attempt < 5 && conversations.length === 0; attempt += 1) {
       await delay(400 + attempt * 200);

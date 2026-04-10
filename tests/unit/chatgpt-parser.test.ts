@@ -1,5 +1,6 @@
 /* @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { parseConversationFromApi, parseConversationListFromApi } from '../../src/adapters/chatgpt/api';
 import { parseChatGptConversation, scanChatGptConversationList } from '../../src/adapters/chatgpt/parser';
 
 function setDocumentMarkup(markup: string, title = 'ChatGPT') {
@@ -60,6 +61,88 @@ describe('ChatGPT parser', () => {
         site: 'chatgpt',
         title: 'Fallback title',
         url: 'http://localhost:3000/c/conv-fallback',
+        isActive: true
+      }
+    ]);
+  });
+
+  it('parses the current conversation from ChatGPT API data', () => {
+    const conversation = parseConversationFromApi({
+      id: 'conv-api',
+      title: 'API export',
+      current_node: 'assistant-1',
+      mapping: {
+        root: { id: 'root', children: ['user-1'] },
+        'user-1': {
+          id: 'user-1',
+          parent: 'root',
+          children: ['assistant-1'],
+          message: {
+            id: 'user-msg',
+            author: { role: 'user' },
+            create_time: 1710000000,
+            content: { parts: ['Hello from API'] }
+          }
+        },
+        'assistant-1': {
+          id: 'assistant-1',
+          parent: 'user-1',
+          children: [],
+          message: {
+            id: 'assistant-msg',
+            author: { role: 'assistant' },
+            create_time: 1710000001,
+            content: { parts: ['Reply from API'] },
+            metadata: {
+              attachments: [
+                {
+                  name: 'notes.txt',
+                  mime_type: 'text/plain',
+                  url: 'https://example.com/notes.txt',
+                  size: 12
+                }
+              ]
+            }
+          }
+        }
+      }
+    }, 'https://chatgpt.com/c/conv-api');
+
+    expect(conversation).not.toBeNull();
+    expect(conversation?.id).toBe('conv-api');
+    expect(conversation?.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
+    expect(conversation?.messages.map((message) => message.text)).toEqual(['Hello from API', 'Reply from API']);
+    expect(conversation?.messages[1].attachments).toEqual([
+      {
+        name: 'notes.txt',
+        type: 'text/plain',
+        url: 'https://example.com/notes.txt',
+        size: 12
+      }
+    ]);
+  });
+
+  it('parses the conversation list from ChatGPT API data', () => {
+    const conversations = parseConversationListFromApi([
+      { id: 'conv-1', title: 'First', update_time: 1710000100 },
+      { id: 'conv-2', title: 'Second', update_time: 1710000200 }
+    ], 'https://chatgpt.com', 'conv-2');
+
+    expect(conversations).toEqual([
+      {
+        id: 'conv-1',
+        site: 'chatgpt',
+        title: 'First',
+        url: 'https://chatgpt.com/c/conv-1',
+        updatedAt: new Date(1710000100 * 1000).toISOString(),
+        isActive: false
+      },
+      {
+        id: 'conv-2',
+        site: 'chatgpt',
+        title: 'Second',
+        url: 'https://chatgpt.com/c/conv-2',
+        updatedAt: new Date(1710000200 * 1000).toISOString(),
         isActive: true
       }
     ]);
