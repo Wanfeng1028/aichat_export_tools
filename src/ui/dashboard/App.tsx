@@ -256,12 +256,24 @@ export function DashboardApp() {
   }
 
   async function handleOpenDownload(item: ExportHistoryRecord, mode: 'file' | 'folder') {
-    if (!item.downloadId) return;
-    if (mode === 'file') {
-      await chrome.downloads.open(item.downloadId);
+    if (!item.downloadId) {
+      failProgress(isZh ? '当前导出记录没有可用的下载任务编号。' : 'This export record does not have a usable download id.');
       return;
     }
-    await chrome.downloads.show(item.downloadId);
+
+    const response = await callRuntime({
+      type: mode === 'file' ? 'OPEN_DOWNLOAD_FILE' : 'OPEN_DOWNLOAD_FOLDER',
+      downloadId: item.downloadId
+    });
+
+    if (!response.ok) {
+      failProgress(response.error);
+      return;
+    }
+
+    pushLog(mode === 'file'
+      ? (isZh ? '已请求系统打开文件。' : 'Requested the system to open the file.')
+      : (isZh ? '已请求系统打开所在位置。' : 'Requested the system to reveal the file.'), 'success');
   }
 
   function toggleSelectAll() {
@@ -454,5 +466,3 @@ export function DashboardApp() {
     </main>
   );
 }
-
-

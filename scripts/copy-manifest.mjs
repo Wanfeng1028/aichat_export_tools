@@ -14,8 +14,7 @@ const manifest = {
     '128': 'icons/icon-128.png'
   },
   action: {
-    default_title: 'AI Chat Exporter',
-    default_popup: 'src/ui/popup/index.html'
+    default_title: 'AI Chat Exporter'
   },
   background: {
     service_worker: 'src/background/service-worker.js',
@@ -30,7 +29,13 @@ const manifest = {
     'https://kimi.moonshot.cn/*',
     'https://chat.deepseek.com/*',
     'https://grok.com/*',
-    'https://x.com/i/grok*'
+    'https://x.com/i/grok*',
+    'https://www.doubao.com/*',
+    'https://doubao.com/*',
+    'https://tongyi.aliyun.com/*',
+    'https://qianwen.aliyun.com/*',
+    'https://yiyan.baidu.com/*',
+    'https://wenxin.baidu.com/*'
   ],
   host_permissions: [],
   content_scripts: [
@@ -42,7 +47,7 @@ const manifest = {
   ],
   web_accessible_resources: [
     {
-      resources: ['src/content/bridge.js', 'assets/*'],
+      resources: ['src/content/bridge.js', 'src/ui/popup/index.html', 'assets/*', 'logo.png'],
       matches: ['<all_urls>']
     }
   ],
@@ -59,3 +64,4 @@ const outputPath = resolve('dist/manifest.json');
 
 await mkdir(dirname(outputPath), { recursive: true });
 await writeFile(outputPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+

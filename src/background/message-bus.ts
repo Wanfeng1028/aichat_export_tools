@@ -22,7 +22,9 @@ export type RuntimeRequest =
   | { type: 'LIST_EXPORT_HISTORY' }
   | { type: 'LIST_EXPORT_JOBS' }
   | { type: 'CLEAR_EXPORT_DATA' }
-  | { type: 'OPEN_DASHBOARD'; sourceTabId?: number };
+  | { type: 'OPEN_DASHBOARD'; sourceTabId?: number }
+  | { type: 'OPEN_DOWNLOAD_FILE'; downloadId: number }
+  | { type: 'OPEN_DOWNLOAD_FOLDER'; downloadId: number };
 
 export type RuntimeResponse =
   | { ok: true; status: AdapterStatus }
@@ -256,6 +258,29 @@ async function exportSelectedConversationsFlow(sourceTabId: number, format: Expo
   }
 }
 
+async function getDownloadItem(downloadId: number): Promise<chrome.downloads.DownloadItem> {
+  const [item] = await chrome.downloads.search({ id: downloadId });
+  if (!item) {
+    throw new Error('浏览器已经找不到这条下载记录了。');
+  }
+
+  if (item.exists === false) {
+    throw new Error('文件已经被移动、删除，或浏览器无法再定位它。');
+  }
+
+  return item;
+}
+
+async function openDownloadedFile(downloadId: number): Promise<void> {
+  await getDownloadItem(downloadId);
+  await chrome.downloads.open(downloadId);
+}
+
+async function openDownloadedFolder(downloadId: number): Promise<void> {
+  await getDownloadItem(downloadId);
+  await chrome.downloads.show(downloadId);
+}
+
 export async function handleRuntimeRequest(request: RuntimeRequest): Promise<RuntimeResponse> {
   try {
     if (request.type === 'GET_ACTIVE_SITE_STATUS') return { ok: true, status: await requestContentStatus(request.sourceTabId) };
@@ -275,10 +300,16 @@ export async function handleRuntimeRequest(request: RuntimeRequest): Promise<Run
       await chrome.tabs.create({ url: chrome.runtime.getURL(`src/ui/dashboard/index.html?sourceTabId=${sourceTabId}`) });
       return { ok: true };
     }
+    if (request.type === 'OPEN_DOWNLOAD_FILE') {
+      await openDownloadedFile(request.downloadId);
+      return { ok: true };
+    }
+    if (request.type === 'OPEN_DOWNLOAD_FOLDER') {
+      await openDownloadedFolder(request.downloadId);
+      return { ok: true };
+    }
     return { ok: false, error: 'Unsupported request.' };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Unexpected runtime error.' };
   }
 }
-
-

@@ -81,10 +81,10 @@ function createFloatingPanel(sourceTabId?: number): HTMLElement {
   const root = document.createElement('div');
   root.id = FLOATING_ROOT_ID;
   root.style.position = 'fixed';
-  root.style.top = '84px';
-  root.style.right = '24px';
+  root.style.top = '12px';
+  root.style.right = '12px';
   root.style.width = '520px';
-  root.style.height = 'min(920px, calc(100vh - 96px))';
+  root.style.height = 'min(920px, calc(100vh - 24px))';
   root.style.zIndex = '2147483647';
   root.style.borderRadius = '24px';
   root.style.overflow = 'hidden';
@@ -118,7 +118,7 @@ function createFloatingPanel(sourceTabId?: number): HTMLElement {
 
   const minimizeButton = document.createElement('button');
   minimizeButton.type = 'button';
-  minimizeButton.textContent = '−';
+  minimizeButton.textContent = '-';
   minimizeButton.style.width = '28px';
   minimizeButton.style.height = '28px';
   minimizeButton.style.border = '0';
@@ -131,7 +131,7 @@ function createFloatingPanel(sourceTabId?: number): HTMLElement {
 
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
-  closeButton.textContent = '×';
+  closeButton.textContent = 'x';
   closeButton.style.width = '28px';
   closeButton.style.height = '28px';
   closeButton.style.border = '0';
@@ -158,8 +158,8 @@ function createFloatingPanel(sourceTabId?: number): HTMLElement {
   minimizeButton.addEventListener('click', () => {
     minimized = !minimized;
     body.style.display = minimized ? 'none' : 'block';
-    root.style.height = minimized ? '48px' : 'min(920px, calc(100vh - 96px))';
-    minimizeButton.textContent = minimized ? '+' : '−';
+    root.style.height = minimized ? '48px' : 'min(920px, calc(100vh - 24px))';
+    minimizeButton.textContent = minimized ? '+' : '-';
   });
 
   closeButton.addEventListener('click', () => {
@@ -239,3 +239,6 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 });
 
 logger.info('Content script loaded.');
+
+
+
