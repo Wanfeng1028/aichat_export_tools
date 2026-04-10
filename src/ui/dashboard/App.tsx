@@ -477,12 +477,10 @@ export function DashboardApp() {
                 <p className="text-xs uppercase tracking-[0.28em] text-tide">{translate(language, 'conversationScan')}</p>
                 <h2 className="mt-2 text-2xl font-semibold">{translate(language, 'selectWhatToExport')}</h2>
               </div>
-              {supportsBatch ? (
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => void handleScan('default')} disabled={busy} className="rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'working') : translate(language, 'scanConversationList')}</button>
-                  {supportsTeamWorkspace ? <button type="button" onClick={() => void handleScan('team')} disabled={busy} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{isZh ? '扫描 Team 工作空间' : 'Scan Team workspace'}</button> : null}
-                </div>
-              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => void handleScan('default')} disabled={busy || !sourceTabId || !currentSiteMatches} className="rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'working') : translate(language, 'scanConversationList')}</button>
+                {supportsTeamWorkspace ? <button type="button" onClick={() => void handleScan('team')} disabled={busy} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{isZh ? '扫描 Team 工作空间' : 'Scan Team workspace'}</button> : null}
+              </div>
             </div>
 
             {!permissionGranted ? (

@@ -485,22 +485,9 @@ export function PopupApp() {
           </div>
 
           <div className="mt-5 grid gap-3">
-            {exportFormats.map((item) => (
-              <button key={item.value} type="button" onClick={() => setFormat(item.value)} className={`rounded-2xl border px-4 py-3 text-left transition ${format === item.value ? 'border-ink bg-ink text-white' : 'border-slate-200 bg-white text-slate-800 hover:border-slate-400'}`}>
-                <div className="text-sm font-medium">{item.label === 'ZIP' ? translate(language, 'bundle') : item.label}</div>
-                <div className={`mt-1 text-xs ${format === item.value ? 'text-slate-200' : 'text-slate-500'}`}>{translate(language, item.hintKey)}</div>
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-5 grid gap-3">
             <button type="button" onClick={() => void handleExportCurrent()} disabled={busy || !sourceTabId || !currentSiteMatches} className="rounded-2xl bg-ink px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">{busy ? translate(language, 'working') : translate(language, 'exportCurrentConversation')}</button>
-            {supportsBatch ? (
-              <>
-                <button type="button" onClick={() => void handleScan()} disabled={busy || !sourceTabId} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{translate(language, 'scanConversationList')}</button>
-                <button type="button" onClick={() => void handleExportAll()} disabled={busy || !sourceTabId} className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-300">{translate(language, 'exportAllConversations')}</button>
-              </>
-            ) : null}
+            <button type="button" onClick={() => void handleScan()} disabled={busy || !sourceTabId || !currentSiteMatches} className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100">{translate(language, 'scanConversationList')}</button>
+            {supportsBatch ? <button type="button" onClick={() => void handleExportAll()} disabled={busy || !sourceTabId} className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-300">{translate(language, 'exportAllConversations')}</button> : null}
             <button type="button" onClick={() => void openDashboard()} className="rounded-2xl border border-transparent bg-amber-100 px-4 py-3 text-sm font-medium text-amber-900 transition hover:bg-amber-200">{translate(language, 'openFullDashboard')}</button>
           </div>
         </div>
