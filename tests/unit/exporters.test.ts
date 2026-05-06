@@ -39,6 +39,44 @@ describe('exporters', () => {
     expect(markdown).toContain('**Hi there**');
   });
 
+  it('preserves GFM tables, fenced code, math text, and attachments in markdown', async () => {
+    const artifact = await exportConversationToMarkdown({
+      ...conversation,
+      messages: [
+        {
+          id: 'complex',
+          role: 'assistant',
+          text: '',
+          html: `
+            <table>
+              <thead><tr><th>Feature</th><th>Status</th></tr></thead>
+              <tbody><tr><td>GFM</td><td>ok</td></tr></tbody>
+            </table>
+            <pre><code class="language-ts">const value = 42;</code></pre>
+            <span data-math-style="inline" data-latex="E = mc^2"></span>
+            <img src="https://example.com/chart.png" alt="Chart preview">
+          `,
+          attachments: [
+            {
+              name: 'chart.png',
+              type: 'image/png',
+              url: 'https://example.com/chart.png',
+              size: 2048
+            }
+          ]
+        }
+      ]
+    });
+    const markdown = await artifact.content.text();
+
+    expect(markdown).toContain('| Feature | Status |');
+    expect(markdown).toContain('```');
+    expect(markdown).toContain('const value = 42;');
+    expect(markdown).toContain('$E = mc^2$');
+    expect(markdown).toContain('![Chart preview](https://example.com/chart.png)');
+    expect(markdown).toContain('- [chart.png (image/png, 2048 bytes)](https://example.com/chart.png)');
+  });
+
   it('creates a zip bundle containing markdown, pdf, docx, and a README', async () => {
     const artifact = await exportConversationToZip(conversation);
     const zip = await JSZip.loadAsync(await artifact.content.arrayBuffer());

@@ -24,6 +24,21 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
   const normalized = text.replace(/\r/g, '');
   const lines: string[] = [];
 
+  const pushWrappedToken = (token: string) => {
+    let current = '';
+    for (const char of Array.from(token)) {
+      const candidate = `${current}${char}`;
+      if (current && font.widthOfTextAtSize(candidate, size) > maxWidth) {
+        lines.push(current);
+        current = char;
+      } else {
+        current = candidate;
+      }
+    }
+
+    return current;
+  };
+
   for (const paragraph of normalized.split('\n')) {
     if (!paragraph.trim()) {
       lines.push('');
@@ -36,6 +51,14 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
       if (current && font.widthOfTextAtSize(candidate, size) > maxWidth) {
         lines.push(current.trimEnd());
         current = token.trimStart();
+        if (font.widthOfTextAtSize(current, size) > maxWidth) {
+          current = pushWrappedToken(current);
+        }
+        continue;
+      }
+
+      if (font.widthOfTextAtSize(candidate, size) > maxWidth) {
+        current = pushWrappedToken(candidate);
       } else {
         current = candidate;
       }

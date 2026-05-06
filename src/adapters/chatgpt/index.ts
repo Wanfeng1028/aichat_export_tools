@@ -17,6 +17,10 @@ function getConversationPathId(pathname: string): string | null {
   return match?.[2] ?? null;
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export class ChatGptAdapter extends BaseAdapter {
   readonly site = 'chatgpt' as const;
 
@@ -42,6 +46,7 @@ export class ChatGptAdapter extends BaseAdapter {
 
   async exportCurrentConversation(): Promise<ChatConversation> {
     const conversationId = getConversationPathId(globalThis.location.pathname);
+    let apiError: unknown = null;
     if (conversationId) {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
@@ -49,7 +54,8 @@ export class ChatGptAdapter extends BaseAdapter {
           if (conversation && conversation.messages.length > 0) {
             return conversation;
           }
-        } catch {
+        } catch (error) {
+          apiError = error;
           // Fall back to DOM extraction below.
         }
         await delay(400 + attempt * 200);
@@ -66,12 +72,16 @@ export class ChatGptAdapter extends BaseAdapter {
       await delay(500 + attempt * 200);
     }
 
-    this.ensure(lastConversation && lastConversation.messages.length > 0, 'No conversation messages were found on the current page.');
+    const apiHint = apiError
+      ? `ChatGPT API export failed (${getErrorMessage(apiError)}), and the page fallback found no messages. Reload the conversation, make sure it is fully visible, then try again.`
+      : 'No conversation messages were found on the current page.';
+    this.ensure(lastConversation && lastConversation.messages.length > 0, apiHint);
     return lastConversation;
   }
 
   async scanConversationList(): Promise<ConversationSummary[]> {
     const activeConversationId = getConversationPathId(globalThis.location.pathname);
+    let apiError: unknown = null;
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -79,7 +89,8 @@ export class ChatGptAdapter extends BaseAdapter {
         if (conversations.length > 0) {
           return conversations;
         }
-      } catch {
+      } catch (error) {
+        apiError = error;
         // Fall back to DOM extraction below.
       }
       await delay(300 + attempt * 200);
@@ -90,7 +101,10 @@ export class ChatGptAdapter extends BaseAdapter {
       await delay(400 + attempt * 200);
       conversations = scanChatGptConversationList();
     }
-    this.ensure(conversations.length > 0, 'No conversation links were found. Expand the ChatGPT sidebar and try again.');
+    const apiHint = apiError
+      ? `ChatGPT API conversation scan failed (${getErrorMessage(apiError)}), and the page fallback found no links. Expand the ChatGPT sidebar, wait for the list to load, then try again.`
+      : 'No conversation links were found. Expand the ChatGPT sidebar and try again.';
+    this.ensure(conversations.length > 0, apiHint);
     return conversations;
   }
 }

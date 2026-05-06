@@ -1,42 +1,59 @@
 import type { ChatConversation, ExportArtifact } from '../core/types';
 import { buildConversationFilenameFromSettings } from '../core/filename';
+import TurndownService from 'turndown';
+import { gfm } from 'turndown-plugin-gfm';
 
-function decodeHtml(html: string): string {
-  return html
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-}
+const turndown = new TurndownService({
+  bulletListMarker: '-',
+  codeBlockStyle: 'fenced',
+  fence: '```',
+  headingStyle: 'atx'
+});
 
-function htmlToMarkdown(html: string): string {
-  return decodeHtml(
-    html
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/(p|div|section|article|h1|h2|h3|h4|h5|h6)>/gi, '\n\n')
-      .replace(/<(strong|b)>(.*?)<\/(strong|b)>/gi, '**$2**')
-      .replace(/<(em|i)>(.*?)<\/(em|i)>/gi, '_$2_')
-      .replace(/<code>(.*?)<\/code>/gi, '`$1`')
-      .replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_match, code) => `\n\n\0\n${decodeHtml(code)}\n\1\n\n`)
-      .replace(/<li>(.*?)<\/li>/gi, '- $1\n')
-      .replace(/<blockquote>(.*?)<\/blockquote>/gi, (_match, text) => `\n> ${text}\n`)
-      .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi, '[$2]($1)')
-      .replace(/<[^>]+>/g, '')
-  )
-    .replace(/\u00060/g, '```')
-    .replace(/\u00061/g, '```')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+turndown.use(gfm);
+turndown.addRule('chatgptMath', {
+  filter: (node) => node.nodeType === 1 && (
+    (node as Element).matches('[data-math-style], .katex, .math, .math-inline, .math-display') ||
+    (node as Element).getAttribute('aria-label') === 'math'
+  ),
+  replacement: (_content, node) => {
+    const element = node as Element;
+    const text = element.getAttribute('data-latex') ??
+      element.getAttribute('aria-label') ??
+      element.textContent ??
+      '';
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return '';
+    }
+
+    const display = element.matches('.math-display, [data-math-style="display"]');
+    return display ? `\n\n$$\n${trimmed}\n$$\n\n` : `$${trimmed}$`;
+  }
+});
+
+function prepareHtmlForMarkdown(html: string): string {
+  return html.replace(/<([a-z][\w:-]*)\b([^>]*\bdata-latex=(["'])(.*?)\3[^>]*)>([\s\S]*?)<\/\1>/gi, (_match, tag, attrs, _quote, latex) => {
+    const display = /\bdata-math-style=(["'])display\1/i.test(attrs) || /\bclass=(["'])[^"']*math-display[^"']*\1/i.test(attrs);
+    const delimiter = display ? '$$' : '$';
+    return `<${tag}${attrs}>${delimiter}${latex}${delimiter}</${tag}>`;
+  });
 }
 
 function toMarkdown(message: ChatConversation['messages'][number]): string {
-  if (message.html) {
-    return htmlToMarkdown(message.html);
+  const body = message.html ? turndown.turndown(prepareHtmlForMarkdown(message.html)) : message.text.trim();
+  const attachments = message.attachments ?? [];
+  const attachmentLines = attachments.map((attachment) => {
+    const details = [attachment.type, attachment.size ? `${attachment.size} bytes` : undefined].filter(Boolean).join(', ');
+    const label = details ? `${attachment.name} (${details})` : attachment.name;
+    return attachment.url ? `- [${label}](${attachment.url})` : `- ${label}`;
+  });
+
+  if (attachmentLines.length === 0) {
+    return body.trim();
   }
 
-  return message.text.trim();
+  return [body.trim(), 'Attachments:', ...attachmentLines].filter(Boolean).join('\n\n');
 }
 
 export async function exportConversationToMarkdown(conversation: ChatConversation): Promise<ExportArtifact> {
