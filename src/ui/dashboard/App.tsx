@@ -67,7 +67,8 @@ export function DashboardApp() {
   const [logs, setLogs] = useState<DashboardLogItem[]>([]);
 
   const currentSiteMatches = activeSite === sourceSite;
-  const supportsBatch = currentSiteMatches && activeSite === 'chatgpt';
+  const supportsConversationScan = currentSiteMatches;
+  const supportsBatch = currentSiteMatches;
   const supportsTeamWorkspace = currentSiteMatches && activeSite === 'chatgpt';
 
   function pushLog(text: string, level: DashboardLogItem['level'] = 'info') {
@@ -271,7 +272,7 @@ export function DashboardApp() {
         return;
       }
 
-      if (!supportsBatch) {
+      if (!supportsConversationScan) {
         failProgress(isZh ? '当前页面无法直接导出，且当前站点暂不支持会话列表回退导出。' : 'The current page cannot be exported directly, and conversation-list fallback export is not supported for this site yet.');
         return;
       }
@@ -337,7 +338,7 @@ export function DashboardApp() {
   }
 
   async function handleScan(kind: 'default' | 'team' = 'default') {
-    if (!supportsBatch) return;
+    if (!supportsConversationScan) return;
     startProgress(kind === 'team' ? (isZh ? '正在准备扫描 ChatGPT Team 工作空间...' : 'Preparing to scan the ChatGPT Team workspace...') : translate(language, 'scanningSidebar'));
     setBusy(true);
 

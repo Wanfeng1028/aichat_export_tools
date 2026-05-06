@@ -22,7 +22,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     hostnames: ['claude.ai'],
     titleSelectors: ['h1', 'main h2', 'main header h2'],
     messageSelectors: ['[data-testid*="message"]', '[class*="message"]', 'article'],
-    conversationPathHints: ['/chat/']
+    conversationPathHints: ['/chat/'],
+    requirePathHint: true
   },
   {
     site: 'gemini',
@@ -41,7 +42,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     hostnames: ['kimi.moonshot.cn', 'kimi.com', 'www.kimi.com'],
     titleSelectors: ['h1', 'main h2'],
     messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
-    conversationPathHints: ['/chat/']
+    conversationPathHints: ['/chat/'],
+    requirePathHint: true
   },
   {
     site: 'deepseek',
@@ -49,7 +51,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     hostnames: ['chat.deepseek.com'],
     titleSelectors: ['h1', 'main h2'],
     messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
-    conversationPathHints: ['/chat/', '/a/chat/']
+    conversationPathHints: ['/chat/', '/a/chat/', '/a/chat/s/'],
+    requirePathHint: true
   },
   {
     site: 'grok',
@@ -57,7 +60,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     hostnames: ['grok.com', 'x.com'],
     titleSelectors: ['h1', 'main h2'],
     messageSelectors: ['[data-testid*="conversation"] [data-testid*="cellInnerDiv"]', '[class*="message"]', 'article'],
-    conversationPathHints: ['/c/', '/i/grok']
+    conversationPathHints: ['/c/', '/chat/', '/i/grok'],
+    requirePathHint: true
   },
   {
     site: 'doubao',
@@ -65,7 +69,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     hostnames: ['doubao.com', 'www.doubao.com'],
     titleSelectors: ['h1', 'main h2'],
     messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
-    conversationPathHints: ['/chat/']
+    conversationPathHints: ['/chat/'],
+    requirePathHint: true
   },
   {
     site: 'qianwen',
@@ -73,7 +78,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     hostnames: ['tongyi.aliyun.com', 'qianwen.aliyun.com', 'tongyi.com', 'www.tongyi.com', 'qwen.ai', 'www.qwen.ai'],
     titleSelectors: ['h1', 'main h2'],
     messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
-    conversationPathHints: ['/chat/', '/c/', '/share/']
+    conversationPathHints: ['/chat/', '/c/', '/share/'],
+    requirePathHint: true
   },
   {
     site: 'yiyan',
@@ -81,7 +87,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     hostnames: ['yiyan.baidu.com', 'wenxin.baidu.com'],
     titleSelectors: ['h1', 'main h2'],
     messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
-    conversationPathHints: ['/chat/']
+    conversationPathHints: ['/chat/'],
+    requirePathHint: true
   }
 ];
 
@@ -276,7 +283,21 @@ function buildMessages(root: Element, config: GenericSiteConfig): ChatMessage[] 
 
 function getSummaryIdFromUrl(url: URL): string {
   const parts = url.pathname.split('/').filter(Boolean);
-  return parts.at(-1) || url.href;
+  const pathId = parts.at(-1);
+  if (pathId) return pathId;
+  return url.search ? `${url.pathname}${url.search}` : url.href;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function includesBlockedTextToken(text: string, token: string): boolean {
+  if (/[\u3400-\u9fff]/.test(token)) {
+    return text.includes(token);
+  }
+
+  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(token)}([^a-z0-9]|$)`, 'i').test(text);
 }
 
 function shouldKeepConversationLink(anchor: HTMLAnchorElement, config: GenericSiteConfig): boolean {
@@ -297,7 +318,7 @@ function shouldKeepConversationLink(anchor: HTMLAnchorElement, config: GenericSi
   const combined = `${text} ${url.pathname}`.toLowerCase();
   const blockedTextTokens = [...DEFAULT_BLOCKED_TEXT_TOKENS, ...(config.blockedTextTokens ?? [])];
   const blockedPathTokens = [...DEFAULT_BLOCKED_PATH_TOKENS, ...(config.blockedPathTokens ?? [])];
-  if (blockedTextTokens.some((token) => combined.includes(token))) return false;
+  if (blockedTextTokens.some((token) => includesBlockedTextToken(combined, token.toLowerCase()))) return false;
   if (blockedPathTokens.some((token) => url.pathname.toLowerCase().includes(token))) return false;
 
   const pathHints = config.conversationPathHints ?? [];
@@ -315,25 +336,28 @@ function shouldKeepConversationLink(anchor: HTMLAnchorElement, config: GenericSi
 
 function buildConversationSummaries(config: GenericSiteConfig): ConversationSummary[] {
   const roots = Array.from(document.querySelectorAll([...(config.sidebarSelectors ?? []), GENERIC_SIDEBAR_SELECTOR].join(', ')));
-  const anchors = roots.flatMap((root) => Array.from(root.querySelectorAll('a')))
+  const scopedAnchors = roots.flatMap((root) => Array.from(root.querySelectorAll('a')));
+  const allAnchors = scopedAnchors.length > 0 ? scopedAnchors : Array.from(document.querySelectorAll('a'));
+  const anchors = allAnchors
     .filter((anchor): anchor is HTMLAnchorElement => anchor instanceof HTMLAnchorElement)
     .filter((anchor) => shouldKeepConversationLink(anchor, config));
 
   const seen = new Set<string>();
-  const activePath = globalThis.location.pathname;
+  const activeUrl = new URL(globalThis.location.href);
 
   return anchors.map((anchor) => {
     const url = new URL(anchor.href, globalThis.location.href);
     const id = getSummaryIdFromUrl(url);
     const title = textFromNode(anchor);
-    if (!id || !title || seen.has(id)) return null;
-    seen.add(id);
+    const dedupeKey = `${url.pathname}${url.search}`;
+    if (!id || !title || seen.has(dedupeKey)) return null;
+    seen.add(dedupeKey);
     return {
       id,
       site: config.site,
       title,
       url: url.toString(),
-      isActive: url.pathname === activePath
+      isActive: url.pathname === activeUrl.pathname && url.search === activeUrl.search
     } satisfies ConversationSummary;
   }).filter((item): item is ConversationSummary => Boolean(item));
 }
@@ -390,7 +414,17 @@ export class GenericDomAdapter extends BaseAdapter {
   }
 
   async scanConversationList(): Promise<ConversationSummary[]> {
-    throw new Error(`${this.config.label} conversation list scanning is not supported yet. Current MVP batch scanning is only available for ChatGPT.`);
+    let conversations = buildConversationSummaries(this.config);
+    for (let attempt = 0; attempt < 4 && conversations.length === 0; attempt += 1) {
+      await delay(350 + attempt * 250);
+      conversations = buildConversationSummaries(this.config);
+    }
+
+    this.ensure(
+      conversations.length > 0,
+      `No ${this.config.label} conversation links were found. Open or expand the conversation history sidebar and try again.`
+    );
+    return conversations;
   }
 }
 

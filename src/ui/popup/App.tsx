@@ -64,7 +64,8 @@ export function PopupApp() {
   const [_previewConversation, setPreviewConversation] = useState<ChatConversation | null>(null);
 
   const currentSiteMatches = activeSite === sourceSite;
-  const supportsBatch = currentSiteMatches && activeSite === 'chatgpt';
+  const supportsConversationScan = currentSiteMatches;
+  const supportsBatch = currentSiteMatches;
 
   function pushLog(text: string, level: PopupLogItem['level'] = 'info') {
     setLogs((current) => [{ id: `${Date.now()}-${current.length}`, text, level }, ...current].slice(0, 12));
@@ -320,7 +321,7 @@ export function PopupApp() {
         return;
       }
 
-      if (!supportsBatch) {
+      if (!supportsConversationScan) {
         failProgress(isZh ? '当前页面无法直接导出，且当前站点暂不支持会话列表回退导出。' : 'The current page cannot be exported directly, and conversation-list fallback export is not supported for this site yet.');
         return;
       }
@@ -349,7 +350,7 @@ export function PopupApp() {
   }
 
   async function handleScan() {
-    if (!sourceTabId || !supportsBatch) return;
+    if (!sourceTabId || !supportsConversationScan) return;
     startProgress(translate(language, 'scanningSidebar'));
     setBusy(true);
     try {
@@ -482,6 +483,15 @@ export function PopupApp() {
                 </ul>
               )}
             </div>
+          </div>
+
+          <div className="mt-5 grid gap-3">
+            {exportFormats.map((item) => (
+              <button key={item.value} type="button" onClick={() => setFormat(item.value)} className={`rounded-2xl border px-4 py-3 text-left transition ${format === item.value ? 'border-ink bg-ink text-white' : 'border-slate-200 bg-white text-slate-800 hover:border-slate-400'}`}>
+                <div className="text-sm font-medium">{item.label === 'ZIP' ? translate(language, 'bundle') : item.label}</div>
+                <div className={`mt-1 text-xs ${format === item.value ? 'text-slate-200' : 'text-slate-500'}`}>{translate(language, item.hintKey)}</div>
+              </button>
+            ))}
           </div>
 
           <div className="mt-5 grid gap-3">
