@@ -33,6 +33,13 @@ type ChatGptApiConversationListItem = {
   update_time?: number | string | null;
 };
 
+type ChatGptApiConversationListResponse = {
+  items?: ChatGptApiConversationListItem[];
+  conversations?: ChatGptApiConversationListItem[];
+  total?: number;
+  total_count?: number;
+};
+
 function normalizeRole(role: string | null | undefined): MessageRole {
   if (role === 'assistant' || role === 'system' || role === 'tool') {
     return role;
@@ -268,21 +275,31 @@ export async function fetchConversationFromApi(conversationId: string): Promise<
 
 export async function fetchConversationListFromApi(activeConversationId?: string | null): Promise<ConversationSummary[]> {
   const pageSize = 100;
-  const maxPages = 10;
+  const maxPages = 50;
   const items: ChatGptApiConversationListItem[] = [];
+  let expectedTotal: number | null = null;
 
   for (let page = 0; page < maxPages; page += 1) {
-    const data = await fetchJson<{ items?: ChatGptApiConversationListItem[]; conversations?: ChatGptApiConversationListItem[] } | ChatGptApiConversationListItem[]>(
+    const data = await fetchJson<ChatGptApiConversationListResponse | ChatGptApiConversationListItem[]>(
       '/backend-api/conversations',
       { offset: page * pageSize, limit: pageSize, order: 'updated' }
     );
     const pageItems = Array.isArray(data) ? data : data.items ?? data.conversations ?? [];
+    const total = Array.isArray(data) ? null : data.total ?? data.total_count ?? null;
+    if (typeof total === 'number' && Number.isFinite(total)) {
+      expectedTotal = total;
+    }
+
     if (pageItems.length === 0) {
       break;
     }
 
     items.push(...pageItems);
-    if (pageItems.length < pageSize) {
+    if (expectedTotal !== null && items.length >= expectedTotal) {
+      break;
+    }
+
+    if (pageItems.length < pageSize && expectedTotal === null) {
       break;
     }
   }

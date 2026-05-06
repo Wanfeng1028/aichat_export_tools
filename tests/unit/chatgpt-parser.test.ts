@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { parseConversationFromApi, parseConversationListFromApi } from '../../src/adapters/chatgpt/api';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fetchConversationListFromApi, parseConversationFromApi, parseConversationListFromApi } from '../../src/adapters/chatgpt/api';
 import { parseChatGptConversation, scanChatGptConversationList } from '../../src/adapters/chatgpt/parser';
 
 function setDocumentMarkup(markup: string, title = 'ChatGPT') {
@@ -19,6 +19,7 @@ describe('ChatGPT parser', () => {
     window.history.replaceState({}, '', originalPath || '/');
     document.body.innerHTML = '';
     document.title = 'ChatGPT';
+    vi.restoreAllMocks();
   });
 
   it('extracts structured messages from the current conversation view', () => {
@@ -146,5 +147,36 @@ describe('ChatGPT parser', () => {
         isActive: true
       }
     ]);
+  });
+
+  it('fetches ChatGPT conversation list pages beyond the first 1000 items', async () => {
+    const pageSize = 100;
+    const total = 1005;
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const requestUrl = new URL(String(url));
+      const offset = Number(requestUrl.searchParams.get('offset') ?? 0);
+      const limit = Number(requestUrl.searchParams.get('limit') ?? pageSize);
+      const count = Math.max(0, Math.min(limit, total - offset));
+      const items = Array.from({ length: count }, (_item, index) => {
+        const id = `conv-${offset + index + 1}`;
+        return { id, title: `Conversation ${offset + index + 1}`, update_time: 1710000000 + offset + index };
+      });
+
+      return {
+        ok: true,
+        json: async () => ({ items, total })
+      } as Response;
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    const conversations = await fetchConversationListFromApi('conv-1005');
+
+    expect(conversations).toHaveLength(total);
+    expect(conversations.at(-1)).toMatchObject({
+      id: 'conv-1005',
+      url: 'http://localhost:3000/c/conv-1005',
+      isActive: true
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(11);
   });
 });
