@@ -275,7 +275,7 @@ export async function fetchConversationFromApi(conversationId: string): Promise<
 
 export async function fetchConversationListFromApi(activeConversationId?: string | null): Promise<ConversationSummary[]> {
   const pageSize = 100;
-  const maxPages = 50;
+  const maxPages = 200;
   const items: ChatGptApiConversationListItem[] = [];
   let expectedTotal: number | null = null;
 

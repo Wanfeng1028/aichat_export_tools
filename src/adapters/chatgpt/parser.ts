@@ -1,4 +1,4 @@
-import type { ChatConversation, ChatMessage, ConversationSummary, MessageRole } from '../../core/types';
+import type { ChatAttachment, ChatConversation, ChatMessage, ConversationSummary, MessageRole } from '../../core/types';
 import { sanitizePlainText } from '../../utils/sanitize';
 import { chatGptSelectors } from './selectors';
 
@@ -127,16 +127,113 @@ function extractMessageContent(node: Element): { text: string; html: string } {
   return { text: '', html: '' };
 }
 
+function normalizeAttachmentUrl(value: string | null): string | undefined {
+  if (!value || value.startsWith('data:') || value.startsWith('blob:')) {
+    return value ?? undefined;
+  }
+
+  try {
+    return new URL(value, globalThis.location.href).toString();
+  } catch {
+    return value;
+  }
+}
+
+function getFilenameFromUrl(value: string | undefined): string {
+  if (!value) return '';
+
+  try {
+    const url = new URL(value, globalThis.location.href);
+    const pathnameName = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() ?? '');
+    return sanitizePlainText(pathnameName);
+  } catch {
+    return '';
+  }
+}
+
+function inferAttachmentType(element: Element, url?: string, name?: string): string | undefined {
+  if (element instanceof HTMLImageElement) return 'image';
+  const explicitType = element.getAttribute('type') ?? element.getAttribute('data-mime-type') ?? element.getAttribute('data-file-type');
+  if (explicitType) return sanitizePlainText(explicitType);
+
+  const extension = (name || getFilenameFromUrl(url)).split('.').pop()?.toLowerCase();
+  if (!extension) return undefined;
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg'].includes(extension)) return `image/${extension === 'jpg' ? 'jpeg' : extension}`;
+  if (extension === 'pdf') return 'application/pdf';
+  if (extension === 'txt' || extension === 'md') return 'text/plain';
+  return undefined;
+}
+
+function pushUniqueAttachment(target: ChatAttachment[], attachment: ChatAttachment): void {
+  const key = `${attachment.name}|${attachment.url ?? ''}|${attachment.type ?? ''}`;
+  if (target.some((item) => `${item.name}|${item.url ?? ''}|${item.type ?? ''}` === key)) {
+    return;
+  }
+  target.push(attachment);
+}
+
+function extractAttachments(node: Element): ChatAttachment[] {
+  const attachments: ChatAttachment[] = [];
+
+  for (const image of Array.from(node.querySelectorAll<HTMLImageElement>('img[src]'))) {
+    const url = normalizeAttachmentUrl(image.getAttribute('src'));
+    const name =
+      sanitizePlainText(image.getAttribute('alt') ?? '') ||
+      sanitizePlainText(image.getAttribute('aria-label') ?? '') ||
+      getFilenameFromUrl(url) ||
+      `image-${attachments.length + 1}`;
+
+    pushUniqueAttachment(attachments, {
+      name,
+      type: inferAttachmentType(image, url, name),
+      url
+    });
+  }
+
+  const fileSelectors = [
+    'a[href][download]',
+    'a[href*="/backend-api/files/"]',
+    'a[href*="/files/"]',
+    'a[href*="download"]',
+    '[data-testid*="attachment"]',
+    '[data-testid*="file"]',
+    '[class*="attachment"]',
+    '[class*="file"]'
+  ].join(', ');
+
+  for (const element of Array.from(node.querySelectorAll<HTMLElement>(fileSelectors))) {
+    const link = element instanceof HTMLAnchorElement ? element : element.querySelector<HTMLAnchorElement>('a[href]');
+    const url = normalizeAttachmentUrl(link?.getAttribute('href') ?? element.getAttribute('data-url') ?? element.getAttribute('data-download-url'));
+    const name =
+      sanitizePlainText(element.getAttribute('download') ?? '') ||
+      sanitizePlainText(element.getAttribute('data-filename') ?? '') ||
+      sanitizePlainText(element.getAttribute('title') ?? '') ||
+      sanitizePlainText(element.getAttribute('aria-label') ?? '') ||
+      sanitizePlainText(element.textContent ?? '') ||
+      getFilenameFromUrl(url) ||
+      `attachment-${attachments.length + 1}`;
+
+    pushUniqueAttachment(attachments, {
+      name,
+      type: inferAttachmentType(element, url, name),
+      url
+    });
+  }
+
+  return attachments;
+}
+
 function buildMessage(node: Element, index: number): ChatMessage {
   const role = inferRole(node, index);
   const { text, html } = extractMessageContent(node);
+  const attachments = extractAttachments(node);
 
   return {
     id: node.getAttribute('data-message-id') ?? `msg-${index + 1}`,
     role,
     text,
     html,
-    attachments: []
+    attachments
   };
 }
 
@@ -177,17 +274,18 @@ function createSnapshotMessage(documentRef: Document): ChatMessage[] {
 
   const html = normalizeHtml(clone.innerHTML);
   const text = sanitizePlainText(clone.textContent ?? '');
-  if (!text && !html) {
+  const attachments = extractAttachments(clone);
+  if (!text && !html && attachments.length === 0) {
     return [];
   }
 
   return [
     {
       id: 'snapshot-1',
-      role: 'assistant',
+      role: 'system',
       text,
       html,
-      attachments: []
+      attachments
     }
   ];
 }

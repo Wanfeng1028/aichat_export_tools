@@ -7,17 +7,35 @@ import { buildConversationFilenameFromSettings } from '../core/filename';
 import { buildConversationSections, buildConversationSummary } from './shared';
 
 async function loadFontBytes(url: string): Promise<Uint8Array> {
-  const resolvedUrl = typeof globalThis.location?.href === 'string' ? new URL(url, globalThis.location.href).toString() : url;
-  const response = await fetch(resolvedUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to load PDF font asset: ${response.status}`);
+  const candidates = [
+    typeof globalThis.chrome?.runtime?.getURL === 'function' ? globalThis.chrome.runtime.getURL(url.replace(/^\/+/, '')) : null,
+    typeof globalThis.location?.href === 'string' ? new URL(url, globalThis.location.href).toString() : null,
+    url
+  ].filter((item): item is string => Boolean(item));
+
+  let lastError: unknown = null;
+  for (const candidate of Array.from(new Set(candidates))) {
+    try {
+      const response = await fetch(candidate);
+      if (!response.ok) {
+        throw new Error(`Failed to load PDF font asset: ${response.status}`);
+      }
+
+      return new Uint8Array(await response.arrayBuffer());
+    } catch (error) {
+      lastError = error;
+    }
   }
 
-  return new Uint8Array(await response.arrayBuffer());
+  throw lastError instanceof Error ? lastError : new Error('Failed to load PDF font asset.');
+}
+
+function isCjkToken(token: string): boolean {
+  return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(token);
 }
 
 function splitForWrap(text: string): string[] {
-  return text.match(/[A-Za-z0-9_:/.@#%+\-=]+|\s+|./gu) ?? [];
+  return text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+[，。！？；：、,.!?;:]?|\p{P}+|[A-Za-z0-9_:/.@#%+\-=]+|\s+|./gu) ?? [];
 }
 
 function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
@@ -50,7 +68,7 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
       const candidate = `${current}${token}`;
       if (current && font.widthOfTextAtSize(candidate, size) > maxWidth) {
         lines.push(current.trimEnd());
-        current = token.trimStart();
+        current = isCjkToken(token) ? token : token.trimStart();
         if (font.widthOfTextAtSize(current, size) > maxWidth) {
           current = pushWrappedToken(current);
         }
@@ -85,7 +103,8 @@ async function resolvePdfFonts(pdf: PDFDocument): Promise<{ font: PDFFont; boldF
       font: await pdf.embedFont(regularFontBytes, { subset: false }),
       boldFont: await pdf.embedFont(boldFontBytes, { subset: false })
     };
-  } catch {
+  } catch (error) {
+    console.warn('AI Chat Exporter could not load bundled PDF fonts. Falling back to Helvetica; CJK text may not render correctly.', error);
     return {
       font: await pdf.embedFont(StandardFonts.Helvetica),
       boldFont: await pdf.embedFont(StandardFonts.HelveticaBold)

@@ -3,6 +3,7 @@ import JSZip from 'jszip';
 import { exportConversationBatch } from '../../src/exporters/batch';
 import { exportConversationToMarkdown } from '../../src/exporters/markdown';
 import { exportConversationToZip } from '../../src/exporters/zip';
+import { buildConversationSections } from '../../src/exporters/shared';
 import type { ChatConversation } from '../../src/core/types';
 
 const conversation: ChatConversation = {
@@ -75,6 +76,29 @@ describe('exporters', () => {
     expect(markdown).toContain('$E = mc^2$');
     expect(markdown).toContain('![Chart preview](https://example.com/chart.png)');
     expect(markdown).toContain('- [chart.png (image/png, 2048 bytes)](https://example.com/chart.png)');
+  });
+
+  it('includes attachment metadata in plain export sections', () => {
+    const sections = buildConversationSections({
+      ...conversation,
+      messages: [
+        {
+          id: 'image-only',
+          role: 'user',
+          text: '',
+          attachments: [
+            {
+              name: 'diagram.png',
+              type: 'image/png',
+              url: 'https://example.com/diagram.png'
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(sections[0].body).toContain('Attachments:');
+    expect(sections[0].body).toContain('- diagram.png (image/png): https://example.com/diagram.png');
   });
 
   it('creates a zip bundle containing markdown, pdf, docx, and a README', async () => {

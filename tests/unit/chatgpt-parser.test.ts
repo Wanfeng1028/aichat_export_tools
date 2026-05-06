@@ -45,6 +45,54 @@ describe('ChatGPT parser', () => {
     expect(conversation.messages.map((message) => message.text)).toEqual(['hello', 'hi there']);
   });
 
+  it('extracts DOM attachments and keeps image-only messages', () => {
+    window.history.replaceState({}, '', '/c/conv-attachments');
+    setDocumentMarkup(`
+      <main>
+        <h1>Attachment export</h1>
+        <article data-message-id="m1" data-message-author-role="user">
+          <div data-testid="conversation-turn-content">
+            <img src="/cdn/image.png" alt="diagram.png" />
+            <a href="/backend-api/files/file-1" download="notes.pdf">notes.pdf</a>
+          </div>
+        </article>
+      </main>
+    `, 'Attachment export - ChatGPT');
+
+    const conversation = parseChatGptConversation(document);
+
+    expect(conversation.messages).toHaveLength(1);
+    expect(conversation.messages[0].text).toBe('notes.pdf');
+    expect(conversation.messages[0].attachments).toEqual([
+      {
+        name: 'diagram.png',
+        type: 'image',
+        url: 'http://localhost:3000/cdn/image.png'
+      },
+      {
+        name: 'notes.pdf',
+        type: 'application/pdf',
+        url: 'http://localhost:3000/backend-api/files/file-1'
+      }
+    ]);
+  });
+
+  it('uses a system role for snapshot fallback messages', () => {
+    window.history.replaceState({}, '', '/c/conv-snapshot');
+    setDocumentMarkup(`
+      <main>
+        <h1>Snapshot fallback</h1>
+        <div>Loose conversation text without structured turn markers.</div>
+      </main>
+    `, 'Snapshot fallback - ChatGPT');
+
+    const conversation = parseChatGptConversation(document);
+
+    expect(conversation.messages).toHaveLength(1);
+    expect(conversation.messages[0].role).toBe('system');
+    expect(conversation.messages[0].text).toContain('Loose conversation text');
+  });
+
   it('falls back to the current conversation when sidebar links are unavailable', () => {
     window.history.replaceState({}, '', '/c/conv-fallback');
     setDocumentMarkup(`
