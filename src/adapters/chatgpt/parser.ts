@@ -32,6 +32,16 @@ const removableUiSelectors = [
   '[data-testid*="history"]'
 ];
 
+const snapshotBlockSelectors = [
+  '[data-message-author-role]',
+  '[data-message-id]',
+  '[data-testid*="conversation-turn"]',
+  '[data-testid*="message"]',
+  'article',
+  'section',
+  '[role="article"]'
+].join(', ');
+
 function normalizeRole(role: string | null): MessageRole {
   if (role === 'assistant' || role === 'system' || role === 'tool') {
     return role;
@@ -258,7 +268,48 @@ function extractStructuredMessages(documentRef: Document): ChatMessage[] {
   const main = getConversationRoot(documentRef);
   const rawNodes = Array.from(main?.querySelectorAll(chatGptSelectors.conversationTurns) ?? documentRef.querySelectorAll(chatGptSelectors.conversationTurns));
   const uniqueNodes = uniqueTopLevelNodes(rawNodes, main);
-  return uniqueNodes.map(buildMessage).filter((message) => message.text.length > 0 || Boolean(message.html));
+  return uniqueNodes.map(buildMessage).filter((message) => message.text.length > 0 || Boolean(message.html) || (message.attachments?.length ?? 0) > 0);
+}
+
+function hasSnapshotContent(node: Element): boolean {
+  return sanitizePlainText(node.textContent ?? '').length > 0 || normalizeHtml(node.innerHTML).length > 0 || extractAttachments(node).length > 0;
+}
+
+function isSnapshotHeading(node: Element): boolean {
+  return /^H[1-6]$/i.test(node.tagName);
+}
+
+function collectDirectSnapshotBlocks(root: Element): Element[] {
+  const explicitBlocks = Array.from(root.querySelectorAll(snapshotBlockSelectors))
+    .filter((node) => root.contains(node))
+    .filter((node) => hasSnapshotContent(node));
+
+  if (explicitBlocks.length > 1) {
+    return uniqueTopLevelNodes(explicitBlocks, root);
+  }
+
+  return Array.from(root.children)
+    .filter((node) => !isSnapshotHeading(node) && !isLikelyUiContainer(node) && hasSnapshotContent(node));
+}
+
+function collectSnapshotBlocks(root: Element): Element[] {
+  const directBlocks = collectDirectSnapshotBlocks(root);
+  if (directBlocks.length > 1) {
+    return directBlocks;
+  }
+
+  for (const child of Array.from(root.children)) {
+    if (isSnapshotHeading(child) || isLikelyUiContainer(child)) {
+      continue;
+    }
+
+    const childBlocks = collectDirectSnapshotBlocks(child);
+    if (childBlocks.length > 1) {
+      return childBlocks;
+    }
+  }
+
+  return [];
 }
 
 function createSnapshotMessage(documentRef: Document): ChatMessage[] {
@@ -270,6 +321,13 @@ function createSnapshotMessage(documentRef: Document): ChatMessage[] {
   const clone = main.cloneNode(true) as HTMLElement;
   for (const selector of removableUiSelectors) {
     clone.querySelectorAll(selector).forEach((node) => node.remove());
+  }
+
+  const blocks = collectSnapshotBlocks(clone);
+  if (blocks.length > 1) {
+    return blocks
+      .map((block, index) => buildMessage(block, index))
+      .filter((message) => message.text.length > 0 || Boolean(message.html) || (message.attachments?.length ?? 0) > 0);
   }
 
   const html = normalizeHtml(clone.innerHTML);

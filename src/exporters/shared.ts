@@ -25,10 +25,11 @@ export function buildConversationSections(conversation: ChatConversation): Expor
   return conversation.messages.map((message) => {
     const body = message.text.trim();
     const attachments = formatAttachments(message);
+    const placeholder = attachments.length > 0 ? '[Attachment-only message]' : '[Empty message]';
 
     return {
       heading: message.role.toUpperCase(),
-      body: [body || (attachments.length > 0 ? '' : '[Empty message]'), ...attachments].filter(Boolean).join('\n')
+      body: [body || placeholder, ...attachments].filter(Boolean).join('\n')
     };
   });
 }

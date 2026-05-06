@@ -34,7 +34,7 @@ function isCjkToken(token: string): boolean {
   return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(token);
 }
 
-function splitForWrap(text: string): string[] {
+export function splitForPdfWrap(text: string): string[] {
   return text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+[，。！？；：、,.!?;:]?|\p{P}+|[A-Za-z0-9_:/.@#%+\-=]+|\s+|./gu) ?? [];
 }
 
@@ -64,7 +64,7 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
     }
 
     let current = '';
-    for (const token of splitForWrap(paragraph)) {
+    for (const token of splitForPdfWrap(paragraph)) {
       const candidate = `${current}${token}`;
       if (current && font.widthOfTextAtSize(candidate, size) > maxWidth) {
         lines.push(current.trimEnd());

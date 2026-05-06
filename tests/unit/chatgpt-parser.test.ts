@@ -93,6 +93,25 @@ describe('ChatGPT parser', () => {
     expect(conversation.messages[0].text).toContain('Loose conversation text');
   });
 
+  it('splits snapshot fallback into multiple inferred messages when possible', () => {
+    window.history.replaceState({}, '', '/c/conv-snapshot-blocks');
+    setDocumentMarkup(`
+      <main>
+        <h1>Snapshot blocks</h1>
+        <div>
+          <div>First loose message.</div>
+          <div>Second loose response.</div>
+        </div>
+      </main>
+    `, 'Snapshot blocks - ChatGPT');
+
+    const conversation = parseChatGptConversation(document);
+
+    expect(conversation.messages).toHaveLength(2);
+    expect(conversation.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
+    expect(conversation.messages.map((message) => message.text)).toEqual(['First loose message.', 'Second loose response.']);
+  });
+
   it('falls back to the current conversation when sidebar links are unavailable', () => {
     window.history.replaceState({}, '', '/c/conv-fallback');
     setDocumentMarkup(`

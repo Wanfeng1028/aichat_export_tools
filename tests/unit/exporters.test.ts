@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import JSZip from 'jszip';
 import { exportConversationBatch } from '../../src/exporters/batch';
 import { exportConversationToMarkdown } from '../../src/exporters/markdown';
+import { splitForPdfWrap } from '../../src/exporters/pdf';
 import { exportConversationToZip } from '../../src/exporters/zip';
 import { buildConversationSections } from '../../src/exporters/shared';
 import type { ChatConversation } from '../../src/core/types';
@@ -98,6 +99,24 @@ describe('exporters', () => {
     expect(markdown).toContain('- [chart.png (image/png, 2048 bytes)](https://example.com/chart.png)');
   });
 
+  it('marks attachment-only markdown messages explicitly', async () => {
+    const artifact = await exportConversationToMarkdown({
+      ...conversation,
+      messages: [
+        {
+          id: 'attachment-only',
+          role: 'user',
+          text: '',
+          attachments: [{ name: 'image.png', type: 'image/png', url: 'https://example.com/image.png' }]
+        }
+      ]
+    });
+
+    const markdown = await artifact.content.text();
+    expect(markdown).toContain('[Attachment-only message]');
+    expect(markdown).toContain('- [image.png (image/png)](https://example.com/image.png)');
+  });
+
   it('includes attachment metadata in plain export sections', () => {
     const sections = buildConversationSections({
       ...conversation,
@@ -118,7 +137,12 @@ describe('exporters', () => {
     });
 
     expect(sections[0].body).toContain('Attachments:');
+    expect(sections[0].body).toContain('[Attachment-only message]');
     expect(sections[0].body).toContain('- diagram.png (image/png): https://example.com/diagram.png');
+  });
+
+  it('keeps CJK punctuation attached for PDF wrapping tokens', () => {
+    expect(splitForPdfWrap('这是第一句。下一句继续，ok')).toEqual(['这是第一句。', '下一句继续，', 'ok']);
   });
 
   it('creates a zip bundle containing markdown, pdf, docx, and a README', async () => {
