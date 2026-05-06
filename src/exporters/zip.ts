@@ -4,6 +4,7 @@ import { buildConversationFilenameFromSettings } from '../core/filename';
 import { exportConversationToMarkdown } from './markdown';
 import { exportConversationToPdf } from './pdf';
 import { exportConversationToDocx } from './docx';
+import { buildAttachmentManifest } from './shared';
 
 export async function exportConversationToZip(conversation: ChatConversation) {
   const zip = new JSZip();
@@ -15,12 +16,20 @@ export async function exportConversationToZip(conversation: ChatConversation) {
   zip.file(pdf.filename, await pdf.content.arrayBuffer());
   zip.file(docx.filename, await docx.content.arrayBuffer());
 
+  const attachments = buildAttachmentManifest(conversation);
+  if (attachments.length > 0) {
+    zip.file('attachments.json', JSON.stringify(attachments, null, 2));
+  }
+
   const summary = [
     `Title: ${conversation.title}`,
     `Site: ${conversation.site}`,
     `URL: ${conversation.url}`,
     `Exported At: ${conversation.exportedAt}`,
-    `Bundle Contents: ${markdown.filename}, ${pdf.filename}, ${docx.filename}`
+    `Bundle Contents: ${markdown.filename}, ${pdf.filename}, ${docx.filename}${attachments.length > 0 ? ', attachments.json' : ''}`,
+    attachments.length > 0
+      ? 'Attachment Note: attachments.json preserves attachment metadata and source URLs only. Temporary blob:, data:, or authenticated URLs may not be usable after the source page session expires.'
+      : 'Attachment Note: no attachments were detected.'
   ].join('\n');
 
   zip.file('README.txt', summary);

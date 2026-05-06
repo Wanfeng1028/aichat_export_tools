@@ -120,6 +120,10 @@ function inferRole(node: Element, index: number): MessageRole {
   if (avatarAlt.includes('assistant') || avatarAlt.includes('chatgpt')) return 'assistant';
   if (avatarAlt.includes('user') || avatarAlt.includes('you')) return 'user';
 
+  const textPrefix = sanitizePlainText(node.textContent ?? '').slice(0, 40).toLowerCase();
+  if (/^(assistant|chatgpt|gpt|助手|助理|模型)\s*[:：]/i.test(textPrefix)) return 'assistant';
+  if (/^(user|you|me|human|用户|我)\s*[:：]/i.test(textPrefix)) return 'user';
+
   return index % 2 === 0 ? 'user' : 'assistant';
 }
 

@@ -112,6 +112,23 @@ describe('ChatGPT parser', () => {
     expect(conversation.messages.map((message) => message.text)).toEqual(['First loose message.', 'Second loose response.']);
   });
 
+  it('uses role prefixes before alternating snapshot fallback roles', () => {
+    window.history.replaceState({}, '', '/c/conv-snapshot-prefixes');
+    setDocumentMarkup(`
+      <main>
+        <h1>Snapshot prefixes</h1>
+        <div>
+          <p>Assistant: First visible block is an answer.</p>
+          <p>User: Follow-up question.</p>
+        </div>
+      </main>
+    `, 'Snapshot prefixes - ChatGPT');
+
+    const conversation = parseChatGptConversation(document);
+
+    expect(conversation.messages.map((message) => message.role)).toEqual(['assistant', 'user']);
+  });
+
   it('falls back to the current conversation when sidebar links are unavailable', () => {
     window.history.replaceState({}, '', '/c/conv-fallback');
     setDocumentMarkup(`

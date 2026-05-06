@@ -53,7 +53,7 @@ function toMarkdown(message: ChatConversation['messages'][number]): string {
     return body.trim();
   }
 
-  return [body.trim() || '[Attachment-only message]', 'Attachments:', ...attachmentLines].filter(Boolean).join('\n\n');
+  return [body.trim() || '[Attachment-only message: files are listed below]', 'Attachments:', ...attachmentLines].filter(Boolean).join('\n\n');
 }
 
 export async function exportConversationToMarkdown(conversation: ChatConversation): Promise<ExportArtifact> {

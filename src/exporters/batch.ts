@@ -4,6 +4,7 @@ import { exportConversationToMarkdown } from './markdown';
 import { exportConversationToPdf } from './pdf';
 import { exportConversationToDocx } from './docx';
 import { exportConversationToZip } from './zip';
+import { buildAttachmentManifest } from './shared';
 
 async function exportConversationByFormat(conversation: ChatConversation, format: ExportFormat): Promise<ExportArtifact> {
   if (format === 'markdown') {
@@ -39,6 +40,11 @@ export async function exportConversationBatch(conversations: ChatConversation[],
 
     const artifact = await exportConversationByFormat(conversation, format);
     folder.file(artifact.filename, await artifact.content.arrayBuffer());
+
+    const attachments = buildAttachmentManifest(conversation);
+    if (attachments.length > 0) {
+      folder.file('attachments.json', JSON.stringify(attachments, null, 2));
+    }
   }
 
   zip.file(
@@ -47,7 +53,8 @@ export async function exportConversationBatch(conversations: ChatConversation[],
       `AI Chat Exporter batch archive`,
       `Format: ${format}`,
       `Conversations: ${conversations.length}`,
-      `Generated At: ${new Date().toISOString()}`
+      `Generated At: ${new Date().toISOString()}`,
+      `Attachment Note: per-conversation attachments.json files preserve metadata and source URLs only. Temporary blob:, data:, or authenticated URLs may not be usable after the source page session expires.`
     ].join('\n')
   );
 

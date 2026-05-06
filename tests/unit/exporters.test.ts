@@ -113,7 +113,7 @@ describe('exporters', () => {
     });
 
     const markdown = await artifact.content.text();
-    expect(markdown).toContain('[Attachment-only message]');
+    expect(markdown).toContain('[Attachment-only message: files are listed below]');
     expect(markdown).toContain('- [image.png (image/png)](https://example.com/image.png)');
   });
 
@@ -137,7 +137,7 @@ describe('exporters', () => {
     });
 
     expect(sections[0].body).toContain('Attachments:');
-    expect(sections[0].body).toContain('[Attachment-only message]');
+    expect(sections[0].body).toContain('[Attachment-only message: files are listed below]');
     expect(sections[0].body).toContain('- diagram.png (image/png): https://example.com/diagram.png');
   });
 
@@ -146,7 +146,18 @@ describe('exporters', () => {
   });
 
   it('creates a zip bundle containing markdown, pdf, docx, and a README', async () => {
-    const artifact = await exportConversationToZip(conversation);
+    const artifact = await exportConversationToZip({
+      ...conversation,
+      messages: [
+        ...conversation.messages,
+        {
+          id: 'm3',
+          role: 'user',
+          text: '',
+          attachments: [{ name: 'blob-image.png', type: 'image/png', url: 'blob:https://chatgpt.com/123' }]
+        }
+      ]
+    });
     const zip = await JSZip.loadAsync(await artifact.content.arrayBuffer());
 
     expect(Object.keys(zip.files)).toEqual(
@@ -154,21 +165,51 @@ describe('exporters', () => {
         'chatgpt__Quarterly export review__2026-04-09T01-02-03.000Z.md',
         'chatgpt__Quarterly export review__2026-04-09T01-02-03.000Z.pdf',
         'chatgpt__Quarterly export review__2026-04-09T01-02-03.000Z.docx',
+        'attachments.json',
         'README.txt'
       ])
     );
+
+    const attachments = JSON.parse(await zip.file('attachments.json')!.async('text'));
+    expect(attachments).toEqual([
+      expect.objectContaining({
+        messageId: 'm3',
+        name: 'blob-image.png',
+        urlKind: 'blob'
+      })
+    ]);
+    expect(await zip.file('README.txt')!.async('text')).toContain('Temporary blob:');
   });
 
   it('creates a batch archive with one folder per conversation', async () => {
-    const artifact = await exportConversationBatch([conversation], 'markdown');
+    const artifact = await exportConversationBatch([
+      {
+        ...conversation,
+        messages: [
+          {
+            id: 'm1',
+            role: 'user',
+            text: '',
+            attachments: [{ name: 'relative-file.txt', url: '/backend-api/files/file-1' }]
+          }
+        ]
+      }
+    ], 'markdown');
     const zip = await JSZip.loadAsync(await artifact.content.arrayBuffer());
 
     expect(Object.keys(zip.files)).toEqual(
       expect.arrayContaining([
         'Quarterly export review__conversation-42/',
         'Quarterly export review__conversation-42/chatgpt__Quarterly export review__2026-04-09T01-02-03.000Z.md',
+        'Quarterly export review__conversation-42/attachments.json',
         'README.txt'
       ])
     );
+
+    const attachments = JSON.parse(await zip.file('Quarterly export review__conversation-42/attachments.json')!.async('text'));
+    expect(attachments[0]).toMatchObject({
+      name: 'relative-file.txt',
+      urlKind: 'relative'
+    });
   });
 });
