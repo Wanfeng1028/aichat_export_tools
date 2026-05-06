@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import JSZip from 'jszip';
 import { exportConversationBatch } from '../../src/exporters/batch';
 import { exportConversationToMarkdown } from '../../src/exporters/markdown';
@@ -29,6 +31,24 @@ const conversation: ChatConversation = {
 };
 
 describe('exporters', () => {
+  beforeAll(async () => {
+    const regularFontBytes = await readFile(resolve('assets/fonts/Deng-Regular.ttf'));
+    const boldFontBytes = await readFile(resolve('assets/fonts/Deng-Bold.ttf'));
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
+      const value = String(url);
+      const bytes = value.includes('Deng-Bold') ? boldFontBytes : regularFontBytes;
+      return {
+        ok: true,
+        arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      } as Response;
+    }));
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('renders markdown metadata and message sections', async () => {
     const artifact = await exportConversationToMarkdown(conversation);
     const markdown = await artifact.content.text();
