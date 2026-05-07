@@ -40,7 +40,7 @@ export type RuntimeResponse =
 type ContentErrorEnvelope = { __contentError: string };
 
 function isContentErrorEnvelope(value: unknown): value is ContentErrorEnvelope {
-  return Boolean(value) && typeof value === 'object' && '__contentError' in value && typeof (value as { __contentError?: unknown }).__contentError === 'string';
+  return value !== null && typeof value === 'object' && '__contentError' in value && typeof (value as { __contentError?: unknown }).__contentError === 'string';
 }
 
 async function ensureTabsPermission(): Promise<void> {
@@ -116,7 +116,7 @@ function createBatchJobRecord(site: ChatConversation['site'], format: ExportForm
     site,
     conversationId: 'batch',
     title: `Batch export (${conversationCount} conversations)`,
-    format: 'zip',
+    format,
     status: 'queued',
     createdAt: now,
     updatedAt: now
@@ -247,15 +247,17 @@ async function exportSelectedConversationsFlow(sourceTabId: number, format: Expo
     throw new Error('All selected conversations failed to export.');
   }
 
+  let archiveFilename = `batch-${format}.zip`;
   try {
     const artifact = await exportConversationBatch(successful, format);
+    archiveFilename = artifact.filename;
     const download = await downloadArtifact(artifact);
     await addHistoryRecord({
       id: `batch-${format}-${Date.now()}`,
       site: successful[0].site,
       conversationId: 'batch',
       title: `Batch export (${successful.length} conversations)`,
-      format: 'zip',
+      format,
       createdAt: new Date().toISOString(),
       filename: artifact.filename,
       downloadId: download.downloadId,
@@ -267,7 +269,7 @@ async function exportSelectedConversationsFlow(sourceTabId: number, format: Expo
     const errorMessage = error instanceof Error ? error.message : 'Unexpected export error';
     await updateJobStatus(batchJob.id, 'failed', errorMessage);
     await Promise.all(successfulJobIds.map((jobId) => updateJobStatus(jobId, 'failed', `Archive download failed: ${errorMessage}`)));
-    throw error;
+    return { archiveFilename, exportedCount: successful.length, failedCount, error: errorMessage };
   }
 }
 

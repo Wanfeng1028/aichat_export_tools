@@ -76,4 +76,20 @@ describe('GenericDomAdapter', () => {
     expect(conversations?.map((item) => item.title)).toEqual(['Active Gemini chat', 'Second Gemini chat']);
     expect(conversations?.map((item) => item.isActive)).toEqual([true, false]);
   });
+
+  it('uses a short stable id when a conversation URL has no path segment', async () => {
+    setDocumentUrl('/chat/current');
+    setDocumentMarkup(`
+      <aside aria-label="Conversation history">
+        <a href="/chat/current">Current plan</a>
+        <a href="/?conversation=/chat/next-research-pass">Next research pass</a>
+      </aside>
+    `);
+
+    const adapter = createGenericSiteAdapter('claude');
+    const conversations = await adapter?.scanConversationList();
+
+    expect(conversations?.[1].id).toMatch(/^url-[a-z0-9]+$/);
+    expect(conversations?.[1].id.length).toBeLessThan(18);
+  });
 });

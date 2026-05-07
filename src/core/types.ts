@@ -73,6 +73,7 @@ export interface BatchExportResult {
   exportedCount: number;
   failedCount: number;
   savedAs?: string;
+  error?: string;
 }
 
 export interface AdapterStatus {

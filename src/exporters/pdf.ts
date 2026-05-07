@@ -163,7 +163,10 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
     cursorY -= 10;
   }
 
-  const content = new Blob([await pdf.save()], { type: 'application/pdf' });
+  const pdfBytes = await pdf.save();
+  const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
+  new Uint8Array(pdfBuffer).set(pdfBytes);
+  const content = new Blob([pdfBuffer], { type: 'application/pdf' });
 
   return {
     filename: await buildConversationFilenameFromSettings(conversation, 'pdf'),

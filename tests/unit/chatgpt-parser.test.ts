@@ -263,4 +263,15 @@ describe('ChatGPT parser', () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(11);
   });
+
+  it('reports invalid ChatGPT API JSON clearly', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => {
+        throw new SyntaxError('invalid json');
+      }
+    } as unknown as Response)));
+
+    await expect(fetchConversationListFromApi()).rejects.toThrow('ChatGPT API returned invalid JSON.');
+  });
 });

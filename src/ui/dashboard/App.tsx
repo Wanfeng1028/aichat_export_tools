@@ -376,6 +376,11 @@ export function DashboardApp() {
       await tracker;
 
       if (response.ok && 'batch' in response) {
+        if (response.batch.error) {
+          failProgress(isZh ? `批量归档保存失败：${response.batch.error}。已抓取 ${response.batch.exportedCount} 个会话，失败 ${response.batch.failedCount} 个。` : `Batch archive save failed: ${response.batch.error}. Captured ${response.batch.exportedCount} conversations, ${response.batch.failedCount} failed.`);
+          await refreshHistoryAndJobs();
+          return;
+        }
         markStep(94, isZh ? '批量归档已生成，正在落盘...' : 'Batch archive generated. Saving file...');
         completeProgress(translate(language, 'batchReady', { filename: response.batch.archiveFilename, success: response.batch.exportedCount, failed: response.batch.failedCount }));
         if (response.batch.savedAs) {

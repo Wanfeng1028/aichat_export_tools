@@ -75,7 +75,7 @@ function extractTextParts(value: unknown): string[] {
   }
 
   if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
+    const record: Record<string, unknown> = Object(value);
     return [
       ...extractTextParts(record.text),
       ...extractTextParts(record.parts),
@@ -265,7 +265,11 @@ async function fetchJson<T>(path: string, query?: Record<string, string | number
     throw new Error(`ChatGPT API request failed with ${response.status}.`);
   }
 
-  return response.json() as Promise<T>;
+  try {
+    return await response.json() as T;
+  } catch {
+    throw new Error('ChatGPT API returned invalid JSON.');
+  }
 }
 
 export async function fetchConversationFromApi(conversationId: string): Promise<ChatConversation | null> {

@@ -267,7 +267,7 @@ function buildMessages(root: Element, config: GenericSiteConfig): ChatMessage[] 
   }
 
   return candidates
-    .map((element, index) => {
+    .map((element, index): ChatMessage | null => {
       const text = normalizeMessageText(textFromNode(element));
       if (!text) return null;
       const fallbackRole: MessageRole = index % 2 === 0 ? 'user' : 'assistant';
@@ -285,7 +285,12 @@ function getSummaryIdFromUrl(url: URL): string {
   const parts = url.pathname.split('/').filter(Boolean);
   const pathId = parts.at(-1);
   if (pathId) return pathId;
-  return url.search ? `${url.pathname}${url.search}` : url.href;
+  const source = `${url.origin}${url.pathname}${url.search}`;
+  let hash = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = Math.imul(31, hash) + source.charCodeAt(index) | 0;
+  }
+  return `url-${Math.abs(hash).toString(36)}`;
 }
 
 function escapeRegExp(value: string): string {
@@ -345,7 +350,7 @@ function buildConversationSummaries(config: GenericSiteConfig): ConversationSumm
   const seen = new Set<string>();
   const activeUrl = new URL(globalThis.location.href);
 
-  return anchors.map((anchor) => {
+  return anchors.map((anchor): ConversationSummary | null => {
     const url = new URL(anchor.href, globalThis.location.href);
     const id = getSummaryIdFromUrl(url);
     const title = textFromNode(anchor);

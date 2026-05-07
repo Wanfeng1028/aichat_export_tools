@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import JSZip from 'jszip';
 import { exportConversationBatch } from '../../src/exporters/batch';
+import { buildConversationHtml } from '../../src/exporters/html-template';
 import { exportConversationToMarkdown } from '../../src/exporters/markdown';
 import { splitForPdfWrap } from '../../src/exporters/pdf';
 import { exportConversationToZip } from '../../src/exporters/zip';
@@ -141,6 +142,25 @@ describe('exporters', () => {
     expect(sections[0].body).toContain('- diagram.png (image/png): https://example.com/diagram.png');
   });
 
+  it('escapes untrusted content in HTML exports', () => {
+    const html = buildConversationHtml({
+      ...conversation,
+      title: `"><script>alert("title")</script>`,
+      messages: [
+        {
+          id: 'xss',
+          role: 'user',
+          text: `hello "quotes" <img src=x onerror=alert(1)> & 'apostrophe'`
+        }
+      ]
+    });
+
+    expect(html).toContain('&quot;&gt;&lt;script&gt;alert(&quot;title&quot;)&lt;/script&gt;');
+    expect(html).toContain('hello &quot;quotes&quot; &lt;img src=x onerror=alert(1)&gt; &amp; &#39;apostrophe&#39;');
+    expect(html).not.toContain('<script>alert');
+    expect(html).not.toContain('<img src=x');
+  });
+
   it('keeps CJK punctuation attached for PDF wrapping tokens', () => {
     expect(splitForPdfWrap('这是第一句。下一句继续，ok')).toEqual(['这是第一句。', '下一句继续，', 'ok']);
   });
@@ -211,5 +231,13 @@ describe('exporters', () => {
       name: 'relative-file.txt',
       urlKind: 'relative'
     });
+  });
+
+  it('uses the shared filename length limit for batch folders', async () => {
+    const longTitle = 'A'.repeat(100);
+    const artifact = await exportConversationBatch([{ ...conversation, title: longTitle }], 'markdown');
+    const zip = await JSZip.loadAsync(await artifact.content.arrayBuffer());
+
+    expect(Object.keys(zip.files)).toContain(`${'A'.repeat(80)}__conversation-42/`);
   });
 });

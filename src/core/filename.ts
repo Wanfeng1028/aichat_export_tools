@@ -1,12 +1,12 @@
 import type { ChatConversation } from './types';
 import { defaultSettings, getSettings } from '../storage/settings';
 
-function sanitizeSegment(value: string): string {
+export function sanitizeFilenameSegment(value: string, fallback = 'untitled'): string {
   return value
     .replace(/[<>:"/\\|?*]+/g, '-')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 80) || 'untitled';
+    .slice(0, 80) || fallback;
 }
 
 function buildTemplateTokens(conversation: ChatConversation) {
@@ -14,12 +14,12 @@ function buildTemplateTokens(conversation: ChatConversation) {
   const date = timestamp.slice(0, 10);
 
   return {
-    site: sanitizeSegment(conversation.site),
-    title: sanitizeSegment(conversation.title),
+    site: sanitizeFilenameSegment(conversation.site),
+    title: sanitizeFilenameSegment(conversation.title),
     timestamp,
     date,
-    id: sanitizeSegment(conversation.id),
-    workspace: sanitizeSegment(conversation.workspace ?? 'default')
+    id: sanitizeFilenameSegment(conversation.id),
+    workspace: sanitizeFilenameSegment(conversation.workspace ?? 'default')
   };
 }
 
@@ -27,7 +27,7 @@ export function applyFilenameTemplate(conversation: ChatConversation, template: 
   const tokens = buildTemplateTokens(conversation);
   const normalizedTemplate = template.trim() || defaultSettings.filenameTemplate;
   const rendered = normalizedTemplate.replace(/\{(site|title|timestamp|date|id|workspace)\}/g, (_match, token: keyof typeof tokens) => tokens[token]);
-  return sanitizeSegment(rendered.replace(/[.]+$/g, ''));
+  return sanitizeFilenameSegment(rendered.replace(/[.]+$/g, ''));
 }
 
 export function buildConversationFilename(conversation: ChatConversation, extension: string, template = defaultSettings.filenameTemplate): string {

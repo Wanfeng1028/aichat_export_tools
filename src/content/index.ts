@@ -1,6 +1,7 @@
 import { createChatGptAdapter } from '../adapters/chatgpt';
 import { createGenericSiteAdapter } from '../adapters/generic';
 import { createLogger } from '../core/logger';
+import { observeConversationMutations, waitForConversationMutationsToSettle } from './observer';
 
 const logger = createLogger('content');
 const FLOATING_ROOT_ID = 'ai-chat-exporter-floating-root';
@@ -228,7 +229,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   }
 
   if (request.type === 'CONTENT_GET_STATUS') {
-    void adapter.getStatus().then(sendResponse).catch((error: unknown) => {
+    void waitForConversationMutationsToSettle().then(() => adapter.getStatus()).then(sendResponse).catch((error: unknown) => {
       logger.error(error);
       sendResponse({
         site: adapter.site,
@@ -242,7 +243,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   }
 
   if (request.type === 'CONTENT_SCAN_CONVERSATIONS') {
-    void adapter.scanConversationList().then(sendResponse).catch((error: unknown) => {
+    void waitForConversationMutationsToSettle().then(() => adapter.scanConversationList()).then(sendResponse).catch((error: unknown) => {
       logger.error(error);
       sendResponse(toErrorResponse(error));
     });
@@ -250,7 +251,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   }
 
   if (request.type === 'CONTENT_EXPORT_CURRENT_CONVERSATION') {
-    void adapter.exportCurrentConversation().then(sendResponse).catch((error: unknown) => {
+    void waitForConversationMutationsToSettle().then(() => adapter.exportCurrentConversation()).then(sendResponse).catch((error: unknown) => {
       logger.error(error);
       sendResponse(toErrorResponse(error));
     });
@@ -260,4 +261,5 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   return false;
 });
 
+observeConversationMutations();
 logger.info('Content script loaded.');

@@ -5,6 +5,7 @@ import { exportConversationToPdf } from './pdf';
 import { exportConversationToDocx } from './docx';
 import { exportConversationToZip } from './zip';
 import { buildAttachmentManifest } from './shared';
+import { sanitizeFilenameSegment } from '../core/filename';
 
 async function exportConversationByFormat(conversation: ChatConversation, format: ExportFormat): Promise<ExportArtifact> {
   if (format === 'markdown') {
@@ -23,7 +24,7 @@ async function exportConversationByFormat(conversation: ChatConversation, format
 }
 
 function sanitizeFolderName(value: string): string {
-  return value.replace(/[<>:"/\\|?*]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 60) || 'conversation';
+  return sanitizeFilenameSegment(value, 'conversation');
 }
 
 export async function exportConversationBatch(conversations: ChatConversation[], format: ExportFormat): Promise<ExportArtifact> {
