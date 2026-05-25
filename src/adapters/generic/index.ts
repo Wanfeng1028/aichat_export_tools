@@ -75,7 +75,7 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
   {
     site: 'qianwen',
     label: '千问',
-    hostnames: ['tongyi.aliyun.com', 'qianwen.aliyun.com', 'tongyi.com', 'www.tongyi.com', 'qwen.ai', 'www.qwen.ai'],
+    hostnames: ['tongyi.aliyun.com', 'qianwen.aliyun.com', 'tongyi.com', 'www.tongyi.com', 'qwen.ai', 'www.qwen.ai', 'qianwen.com', 'www.qianwen.com'],
     titleSelectors: ['h1', 'main h2'],
     messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
     conversationPathHints: ['/chat/', '/c/', '/share/'],
