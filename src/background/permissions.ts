@@ -8,7 +8,7 @@ const permissionOrigins: Record<SupportedSite, string[]> = {
   deepseek: ['https://chat.deepseek.com/*'],
   grok: ['https://grok.com/*', 'https://x.com/i/grok*'],
   doubao: ['https://www.doubao.com/*', 'https://doubao.com/*'],
-  qianwen: ['https://tongyi.aliyun.com/*', 'https://qianwen.aliyun.com/*', 'https://tongyi.com/*', 'https://www.tongyi.com/*', 'https://qwen.ai/*', 'https://www.qwen.ai/*'],
+  qianwen: ['https://tongyi.aliyun.com/*', 'https://qianwen.aliyun.com/*', 'https://tongyi.com/*', 'https://www.tongyi.com/*', 'https://qwen.ai/*', 'https://www.qwen.ai/*', 'https://qianwen.com/*', 'https://www.qianwen.com/*'],
   yiyan: ['https://yiyan.baidu.com/*', 'https://wenxin.baidu.com/*']
 };
 
@@ -23,7 +23,7 @@ export function detectSupportedSiteFromUrl(url?: string | null): SupportedSite |
     if (hostname.includes('chat.deepseek.com')) return 'deepseek';
     if (hostname.includes('grok.com') || hostname.includes('x.com')) return 'grok';
     if (hostname.includes('doubao.com')) return 'doubao';
-    if (hostname.includes('tongyi.aliyun.com') || hostname.includes('qianwen.aliyun.com') || hostname === 'tongyi.com' || hostname === 'www.tongyi.com' || hostname === 'qwen.ai' || hostname === 'www.qwen.ai') return 'qianwen';
+    if (hostname.includes('tongyi.aliyun.com') || hostname.includes('qianwen.aliyun.com') || hostname === 'tongyi.com' || hostname === 'www.tongyi.com' || hostname === 'qwen.ai' || hostname === 'www.qwen.ai' || hostname === 'qianwen.com' || hostname === 'www.qianwen.com') return 'qianwen';
     if (hostname.includes('yiyan.baidu.com') || hostname.includes('wenxin.baidu.com')) return 'yiyan';
     return null;
   } catch {

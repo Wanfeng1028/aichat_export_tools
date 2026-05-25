@@ -16,6 +16,8 @@ const supportedMatches = [
   'https://www.tongyi.com/*',
   'https://qwen.ai/*',
   'https://www.qwen.ai/*',
+  'https://qianwen.com/*',
+  'https://www.qianwen.com/*',
   'https://yiyan.baidu.com/*',
   'https://wenxin.baidu.com/*'
 ] as const;

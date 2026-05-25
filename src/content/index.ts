@@ -22,7 +22,7 @@ function detectSupportedSiteFromUrl(url?: string | null) {
     if (hostname.includes('chat.deepseek.com')) return 'deepseek';
     if (hostname.includes('grok.com') || hostname.includes('x.com')) return 'grok';
     if (hostname.includes('doubao.com')) return 'doubao';
-    if (hostname.includes('tongyi.aliyun.com') || hostname.includes('qianwen.aliyun.com') || hostname === 'tongyi.com' || hostname === 'www.tongyi.com' || hostname === 'qwen.ai' || hostname === 'www.qwen.ai') return 'qianwen';
+    if (hostname.includes('tongyi.aliyun.com') || hostname.includes('qianwen.aliyun.com') || hostname === 'tongyi.com' || hostname === 'www.tongyi.com' || hostname === 'qwen.ai' || hostname === 'www.qwen.ai' || hostname === 'qianwen.com' || hostname === 'www.qianwen.com') return 'qianwen';
     if (hostname.includes('yiyan.baidu.com') || hostname.includes('wenxin.baidu.com')) return 'yiyan';
     return null;
   } catch {
