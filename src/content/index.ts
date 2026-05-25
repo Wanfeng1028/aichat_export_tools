@@ -1,5 +1,6 @@
 import { createChatGptAdapter } from '../adapters/chatgpt';
 import { createGenericSiteAdapter } from '../adapters/generic';
+import { createQianwenAdapter } from '../adapters/qianwen';
 import { createLogger } from '../core/logger';
 import { observeConversationMutations, waitForConversationMutationsToSettle } from './observer';
 
@@ -35,6 +36,10 @@ function getAdapter() {
 
   if (site === 'chatgpt') {
     return createChatGptAdapter();
+  }
+
+  if (site === 'qianwen') {
+    return createQianwenAdapter();
   }
 
   return site ? createGenericSiteAdapter(site) : null;
