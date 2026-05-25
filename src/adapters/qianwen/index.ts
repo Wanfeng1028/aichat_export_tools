@@ -15,29 +15,45 @@ function textFromNode(node: Element | null | undefined): string {
   return (node.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
+function getDocument(): Document | null {
+  try {
+    return typeof document !== 'undefined' ? document : null;
+  } catch {
+    return null;
+  }
+}
+
 function getConversationIdFromUrl(): string {
-  const match = window.location.pathname.match(/\/chat\/([^/?#]+)/);
-  return match ? match[1] : `qianwen-${Date.now()}`;
+  try {
+    const match = (globalThis.location?.pathname ?? '').match(/\/chat\/([^/?#]+)/);
+    return match ? match[1] : `qianwen-${Date.now()}`;
+  } catch {
+    return `qianwen-${Date.now()}`;
+  }
 }
 
 function getConversationTitle(): string {
-  const h1 = document.querySelector('h1');
+  const doc = getDocument();
+  if (!doc) return '千问对话';
+
+  const h1 = doc.querySelector('h1');
   if (h1 && textFromNode(h1)) return textFromNode(h1);
-  
-  const mainTitle = document.querySelector('main h2, [role="main"] h2');
+
+  const mainTitle = doc.querySelector('main h2, [role="main"] h2');
   if (mainTitle && textFromNode(mainTitle)) return textFromNode(mainTitle);
-  
-  return document.title.replace(/\s*[-|·].*$/, '').trim() || '千问对话';
+
+  return doc.title.replace(/\s*[-|·].*$/, '').trim() || '千问对话';
 }
 
 function findSidebar(): Element | null {
-  return document.querySelector(SIDEBAR_SELECTOR);
+  const doc = getDocument();
+  return doc ? doc.querySelector(SIDEBAR_SELECTOR) : null;
 }
 
 function collectConversationItems(): Element[] {
   const sidebar = findSidebar();
   if (!sidebar) return [];
-  
+
   const items = Array.from(sidebar.querySelectorAll(CONVERSATION_ITEM_SELECTOR));
   return items.filter(item => textFromNode(item).length >= 2);
 }
@@ -51,7 +67,7 @@ function buildConversationSummaries(): ConversationSummary[] {
   for (const item of items) {
     const title = textFromNode(item);
     if (!title || title.length < 2) continue;
-    
+
     const dedupeKey = title.slice(0, 100);
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
@@ -61,7 +77,7 @@ function buildConversationSummaries(): ConversationSummary[] {
       id,
       site: 'qianwen',
       title,
-      url: window.location.href,
+      url: globalThis.location?.href ?? '',
       isActive: false
     });
   }
@@ -115,7 +131,8 @@ function buildMessages(root: Element): ChatMessage[] {
 }
 
 function selectConversationRoot(): Element | null {
-  return document.querySelector(MAIN_SELECTOR) || document.body;
+  const doc = getDocument();
+  return doc ? (doc.querySelector(MAIN_SELECTOR) || doc.body) : null;
 }
 
 export class QianwenAdapter extends BaseAdapter {
@@ -154,7 +171,7 @@ export class QianwenAdapter extends BaseAdapter {
       id: getConversationIdFromUrl(),
       site: 'qianwen',
       title: getConversationTitle(),
-      url: window.location.href,
+      url: globalThis.location?.href ?? '',
       exportedAt: new Date().toISOString(),
       messages
     };
