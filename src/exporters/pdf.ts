@@ -174,6 +174,16 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
     });
   };
 
+  const drawDivider = (yOffset: number, strokeColor = rgb(0.85, 0.85, 0.85)) => {
+    page.drawRectangle({
+      x: margin,
+      y: cursorY - yOffset,
+      width: pageWidth - margin * 2,
+      height: 0.5,
+      color: strokeColor
+    });
+  };
+
   drawWrapped(conversation.title, 22, true, rgb(0.1, 0.1, 0.15));
   cursorY -= 12;
 
@@ -181,13 +191,7 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
     drawWrapped(line, 10, false, rgb(0.4, 0.45, 0.52));
   }
 
-  cursorY -= 14;
-  // Separator line
-  page.moveTo(margin, cursorY);
-  page.lineTo(pageWidth - margin, cursorY);
-  page.setStrokeColor(rgb(0.85, 0.85, 0.85));
-  page.line();
-  page.draw();
+  drawDivider(0, rgb(0.85, 0.85, 0.85));
   cursorY -= 12;
 
   for (const section of buildConversationSections(conversation)) {
@@ -195,12 +199,7 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
     drawWrapped(section.heading, 14, true, rgb(0.15, 0.35, 0.65));
     drawWrapped(section.body, 11);
     cursorY -= 12;
-    // Section separator
-    page.moveTo(margin, cursorY);
-    page.lineTo(pageWidth - margin, cursorY);
-    page.setStrokeColor(rgb(0.9, 0.9, 0.9));
-    page.line();
-    page.draw();
+    drawDivider(0, rgb(0.9, 0.9, 0.9));
     cursorY -= 10;
   }
 

@@ -73,14 +73,15 @@ turndown.addRule('htmlTable', {
     const headers: string[] = [];
     const headerRow = table.querySelector('thead tr');
     const headerCells = headerRow?.querySelectorAll('th') || table.rows[0]?.querySelectorAll('th, td');
-    headerCells?.forEach(cell => headers.push(cell.textContent?.trim() || ''));
+    // Convert NodeList to Array for forEach compatibility in test environments
+    Array.from(headerCells ?? []).forEach(cell => headers.push(cell.textContent?.trim() || ''));
 
     // Extract rows
     const rows: string[][] = [];
     const startRow = headerRow ? 1 : 0;
     for (let i = startRow; i < table.rows.length; i++) {
       const cells: string[] = [];
-      table.rows[i].querySelectorAll('td, th').forEach(cell => {
+      Array.from(table.rows[i].querySelectorAll('td, th')).forEach(cell => {
         cells.push(cell.textContent?.trim() || '');
       });
       rows.push(cells);
@@ -90,9 +91,9 @@ turndown.addRule('htmlTable', {
 
     // Build GFM table
     const lines = [
-      '|' + headers.join('|') + '|',
-      '|' + headers.map(() => '---').join('|') + '|',
-      ...rows.map(row => '|' + row.join('|') + '|')
+      '| ' + headers.join(' | ') + ' |',
+      '| ' + headers.map(() => '---').join(' | ') + ' |',
+      ...rows.map(row => '| ' + row.join(' | ') + ' |')
     ];
 
     return '\n' + lines.join('\n') + '\n\n';

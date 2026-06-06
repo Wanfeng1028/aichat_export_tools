@@ -57,8 +57,8 @@ describe('exporters', () => {
 
     expect(artifact.filename.endsWith('.md')).toBe(true);
     expect(markdown).toContain('# Quarterly export review');
-    expect(markdown).toContain('## user');
-    expect(markdown).toContain('## assistant');
+    expect(markdown).toContain('### 👤 User');
+    expect(markdown).toContain('### 🤖 Assistant');
     expect(markdown).toContain('**Hi there**');
   });
 
