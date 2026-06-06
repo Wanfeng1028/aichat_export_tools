@@ -22,11 +22,13 @@ export function observeConversationMutations(): void {
   observer.observe(root, {
     childList: true,
     subtree: true,
-    characterData: true
+    characterData: true,
+    attributes: true,
+    attributeFilter: ['class', 'data-testid', 'data-message-author-role', 'style']
   });
 }
 
-export async function waitForConversationMutationsToSettle(quietMs = 250, timeoutMs = 2500): Promise<void> {
+export async function waitForConversationMutationsToSettle(quietMs = 500, timeoutMs = 4000): Promise<void> {
   observeConversationMutations();
 
   const startedAt = Date.now();

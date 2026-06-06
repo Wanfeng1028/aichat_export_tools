@@ -15,6 +15,61 @@
 - 各站点适配器相互隔离
 - 先归一化对话数据，再进入导出流程
 
+### 本地开发环境搭建
+
+#### 前置条件
+
+- **Node.js 20+** — [下载地址](https://nodejs.org/)
+- **npm 10+** — 通常随 Node.js 一起安装
+- **Chrome / Edge** — 用于加载和测试扩展
+
+#### 安装步骤
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/Wanfeng1028/aichat_export_tools.git
+cd aichat_export_tools
+
+# 2. 安装依赖
+npm install
+
+# 3. 构建扩展
+npm run build
+
+# 4. 在 Chrome/Edge 中加载扩展
+# - 打开 chrome://extensions/
+# - 开启开发者模式
+# - 点击"加载已解压的扩展程序"
+# - 选择 dist/ 目录
+```
+
+#### 开发流程
+
+```bash
+# 监听模式（开发时推荐）
+npm run dev
+
+# 构建生产版本
+npm run build
+
+# 运行测试
+npm test
+```
+
+#### 调试 Content Script
+
+1. 打开任意一个支持的 AI 对话页面（如 chatgpt.com）
+2. 右键点击页面 → "检查"
+3. 切换到 "Console" 标签页
+4. Content Script 的 console.log 输出会显示在这里
+
+#### 调试 Background Service Worker
+
+1. 打开 `chrome://extensions/`
+2. 找到 AI Chat Exporter 扩展
+3. 点击 "Service Worker" 链接
+4. 在打开的 DevTools 中查看后台日志
+
 ### 开发流程
 
 1. 从最新的 `main` 或当前主分支拉出新分支。
@@ -22,6 +77,30 @@
 3. 运行 `npm test`。
 4. 运行 `npm run build`。
 5. 提交 Pull Request，并附上验证说明。
+
+### 适配器开发指南
+
+为新的 AI 平台开发适配器时，请遵循以下步骤：
+
+1. **分析目标站点的 DOM 结构**
+   - 使用 Chrome DevTools 检查对话消息的 DOM 元素
+   - 找到稳定的选择器（data-testid、data-* 属性、特定的 class 组合）
+
+2. **创建适配器文件**
+   - 在 `src/adapters/` 下创建新的子目录
+   - 实现 `SiteAdapter` 接口：`getStatus()`、`exportCurrentConversation()`、`scanConversationList()`
+
+3. **在 content/index.ts 中添加站点检测**
+   - 在 `detectSupportedSiteFromUrl()` 中添加主机名匹配
+   - 在 `getAdapter()` 中返回新适配器
+
+4. **编写测试**
+   - 在 `tests/` 下添加适配器单元测试
+   - 使用虚拟 HTML 模拟 DOM 结构
+
+5. **更新文档**
+   - 更新 `README.md` 中的站点支持表
+   - 更新 `docs/adapters.md`
 
 ### 适配器规则
 
@@ -62,6 +141,61 @@ This project is a browser extension for exporting AI chat data locally. Contribu
 - adapter isolation per site
 - normalized conversation data before export
 
+### Local Development Setup
+
+#### Prerequisites
+
+- **Node.js 20+** — [Download](https://nodejs.org/)
+- **npm 10+** — Usually installed with Node.js
+- **Chrome / Edge** — To load and test the extension
+
+#### Installation Steps
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/Wanfeng1028/aichat_export_tools.git
+cd aichat_export_tools
+
+# 2. Install dependencies
+npm install
+
+# 3. Build the extension
+npm run build
+
+# 4. Load in Chrome/Edge
+# - Open chrome://extensions/
+# - Enable Developer mode
+# - Click "Load unpacked"
+# - Select the dist/ directory
+```
+
+#### Development Workflow
+
+```bash
+# Watch mode (recommended for development)
+npm run dev
+
+# Production build
+npm run build
+
+# Run tests
+npm test
+```
+
+#### Debugging Content Script
+
+1. Open any supported AI chat page (e.g., chatgpt.com)
+2. Right-click → "Inspect"
+3. Switch to the "Console" tab
+4. Content Script console.log output appears here
+
+#### Debugging Background Service Worker
+
+1. Open `chrome://extensions/`
+2. Find the AI Chat Exporter extension
+3. Click the "Service Worker" link
+4. View background logs in the opened DevTools
+
 ### Development Flow
 
 1. Create a branch from the latest `main` branch or the current primary branch.
@@ -69,6 +203,30 @@ This project is a browser extension for exporting AI chat data locally. Contribu
 3. Run `npm test`.
 4. Run `npm run build`.
 5. Open a pull request with validation notes.
+
+### Adapter Development Guide
+
+To develop an adapter for a new AI platform:
+
+1. **Analyze the target site's DOM structure**
+   - Use Chrome DevTools to inspect DOM elements of conversation messages
+   - Find stable selectors (data-testid, data-* attributes, specific class combinations)
+
+2. **Create the adapter file**
+   - Create a new subdirectory under `src/adapters/`
+   - Implement the `SiteAdapter` interface: `getStatus()`, `exportCurrentConversation()`, `scanConversationList()`
+
+3. **Add site detection in content/index.ts**
+   - Add hostname matching in `detectSupportedSiteFromUrl()`
+   - Return the new adapter in `getAdapter()`
+
+4. **Write tests**
+   - Add adapter unit tests under `tests/`
+   - Use mock HTML to simulate DOM structure
+
+5. **Update documentation**
+   - Update the site support table in `README.md`
+   - Update `docs/adapters.md`
 
 ### Adapter Rules
 

@@ -20,8 +20,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     site: 'claude',
     label: 'Claude',
     hostnames: ['claude.ai'],
-    titleSelectors: ['h1', 'main h2', 'main header h2'],
-    messageSelectors: ['[data-testid*="message"]', '[class*="message"]', 'article'],
+    titleSelectors: ['[data-testid="conversation-title"]', 'h1', 'main h2', 'main header h2'],
+    messageSelectors: ['[data-testid="message"]', '[class*="message-column"]', '[class*="ai-message"]', '[class*="user-message"]', '[class*="assistant-message"]'],
     conversationPathHints: ['/chat/'],
     requirePathHint: true
   },
@@ -29,8 +29,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     site: 'gemini',
     label: 'Gemini',
     hostnames: ['gemini.google.com'],
-    titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['message-content', 'user-query', 'model-response', '[class*="message"]'],
+    titleSelectors: ['[data-bot-name]', 'h1', 'main h2'],
+    messageSelectors: ['[class*="model-message"]', '[class*="user-message"]', '[class*="text-block"]', '[role="listitem"]', '[class*="conversation-item"]'],
     conversationPathHints: ['/app/', '/share/'],
     blockedPathTokens: ['/mystuff', '/notebooks', '/gems', '/library'],
     blockedTextTokens: ['my stuff', 'notebooks', 'gems', 'library'],
@@ -40,8 +40,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     site: 'kimi',
     label: 'Kimi',
     hostnames: ['kimi.moonshot.cn', 'kimi.com', 'www.kimi.com'],
-    titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
+    titleSelectors: ['[data-testid="conversation-title"]', 'h1', 'main h2'],
+    messageSelectors: ['[class*="message-item"]', '[class*="chat-message"]', '[class*="ai-message"]', '[class*="user-content"]', '[class*="assistant-content"]'],
     conversationPathHints: ['/chat/'],
     requirePathHint: true
   },
@@ -49,8 +49,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     site: 'deepseek',
     label: 'DeepSeek',
     hostnames: ['chat.deepseek.com'],
-    titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
+    titleSelectors: ['[data-testid="conversation-title"]', 'h1', 'main h2'],
+    messageSelectors: ['[class*="message-item"]', '[class*="chat-message"]', '[class*="ai-message"]', '[class*="user-message"]', '[class*="assistant-message"]'],
     conversationPathHints: ['/chat/', '/a/chat/', '/a/chat/s/'],
     requirePathHint: true
   },
@@ -58,8 +58,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     site: 'grok',
     label: 'Grok',
     hostnames: ['grok.com', 'x.com'],
-    titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[data-testid*="conversation"] [data-testid*="cellInnerDiv"]', '[class*="message"]', 'article'],
+    titleSelectors: ['[data-testid="conversation-title"]', 'h1', 'main h2'],
+    messageSelectors: '[data-testid="conversation"] [data-testid="cellInnerDiv"]',
     conversationPathHints: ['/c/', '/chat/', '/i/grok'],
     requirePathHint: true
   },
@@ -67,8 +67,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     site: 'doubao',
     label: '豆包',
     hostnames: ['doubao.com', 'www.doubao.com'],
-    titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
+    titleSelectors: ['[data-testid="conversation-title"]', 'h1', 'main h2'],
+    messageSelectors: ['[class*="message-item"]', '[class*="chat-message"]', '[class*="ai-message"]', '[class*="user-content"]', '[class*="assistant-content"]'],
     conversationPathHints: ['/chat/'],
     requirePathHint: true
   },
@@ -76,8 +76,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     site: 'qianwen',
     label: '千问',
     hostnames: ['tongyi.aliyun.com', 'qianwen.aliyun.com', 'tongyi.com', 'www.tongyi.com', 'qwen.ai', 'www.qwen.ai', 'qianwen.com', 'www.qianwen.com'],
-    titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
+    titleSelectors: ['[data-testid="conversation-title"]', 'h1', 'main h2'],
+    messageSelectors: ['[class*="message-item"]', '[class*="chat-message"]', '[class*="ai-message"]', '[class*="user-content"]', '[class*="assistant-content"]'],
     conversationPathHints: ['/chat/', '/c/', '/share/'],
     requirePathHint: true
   },
@@ -85,8 +85,8 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     site: 'yiyan',
     label: '文心一言',
     hostnames: ['yiyan.baidu.com', 'wenxin.baidu.com'],
-    titleSelectors: ['h1', 'main h2'],
-    messageSelectors: ['[class*="message"]', '[data-testid*="message"]', 'article'],
+    titleSelectors: ['[data-testid="conversation-title"]', 'h1', 'main h2'],
+    messageSelectors: ['[class*="message-item"]', '[class*="chat-message"]', '[class*="ai-message"]', '[class*="user-message"]', '[class*="assistant-message"]'],
     conversationPathHints: ['/chat/'],
     requirePathHint: true
   }
@@ -96,12 +96,13 @@ const GENERIC_MESSAGE_SELECTOR = [
   '[data-testid*="message"]',
   '[data-testid*="chat"]',
   '[data-message-author-role]',
-  '[class*="message"]',
-  '[class*="conversation"]',
-  '[class*="chat-item"]',
-  '[class*="turn"]',
+  '[class*="message-item"]',
+  '[class*="chat-message"]',
+  '[class*="ai-message"]',
+  '[class*="user-message"]',
+  '[class*="assistant-message"]',
   '[role="listitem"]',
-  'article'
+  '[class*="conversation-item"]'
 ].join(', ');
 
 const GENERIC_SIDEBAR_SELECTOR = [

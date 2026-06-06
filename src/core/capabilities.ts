@@ -12,8 +12,8 @@ export const siteCapabilities: SiteCapability[] = [
   {
     site: 'chatgpt',
     currentConversation: true,
-    listScan: false,
+    listScan: true,
     workspace: false,
-    batchExport: false
+    batchExport: true
   }
 ];

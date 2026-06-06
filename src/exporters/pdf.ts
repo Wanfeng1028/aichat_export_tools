@@ -1,5 +1,7 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib';
+import notoRegularUrl from '../../assets/fonts/NotoSansSC-Regular.otf';
+import notoBoldUrl from '../../assets/fonts/NotoSansSC-Bold.otf';
 import dengRegularUrl from '../../assets/fonts/Deng-Regular.ttf';
 import dengBoldUrl from '../../assets/fonts/Deng-Bold.ttf';
 import type { ChatConversation, ExportArtifact } from '../core/types';
@@ -93,23 +95,34 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
 async function resolvePdfFonts(pdf: PDFDocument): Promise<{ font: PDFFont; boldFont: PDFFont }> {
   pdf.registerFontkit(fontkit);
 
-  try {
-    const [regularFontBytes, boldFontBytes] = await Promise.all([
-      loadFontBytes(dengRegularUrl),
-      loadFontBytes(dengBoldUrl)
-    ]);
+  // Priority order: NotoSansSC (better CJK coverage) → Deng (fallback) → Helvetica (last resort)
+  const fontSources = [
+    { regular: notoRegularUrl, bold: notoBoldUrl, label: 'NotoSansSC' },
+    { regular: dengRegularUrl, bold: dengBoldUrl, label: 'Deng' }
+  ];
 
-    return {
-      font: await pdf.embedFont(regularFontBytes, { subset: false }),
-      boldFont: await pdf.embedFont(boldFontBytes, { subset: false })
-    };
-  } catch (error) {
-    console.warn('AI Chat Exporter could not load bundled PDF fonts. Falling back to Helvetica; CJK text may not render correctly.', error);
-    return {
-      font: await pdf.embedFont(StandardFonts.Helvetica),
-      boldFont: await pdf.embedFont(StandardFonts.HelveticaBold)
-    };
+  for (const { regular, bold, label } of fontSources) {
+    try {
+      const [regularFontBytes, boldFontBytes] = await Promise.all([
+        loadFontBytes(regular),
+        loadFontBytes(bold)
+      ]);
+
+      return {
+        font: await pdf.embedFont(regularFontBytes, { subset: true }),
+        boldFont: await pdf.embedFont(boldFontBytes, { subset: true })
+      };
+    } catch (error) {
+      console.warn(`AI Chat Exporter failed to load ${label} font, trying next source. Error:`, error);
+    }
   }
+
+  // Last resort: standard Helvetica (no CJK support)
+  console.warn('AI Chat Exporter could not load any bundled PDF fonts. Falling back to Helvetica; CJK text will not render correctly.');
+  return {
+    font: await pdf.embedFont(StandardFonts.Helvetica),
+    boldFont: await pdf.embedFont(StandardFonts.HelveticaBold)
+  };
 }
 
 export async function exportConversationToPdf(conversation: ChatConversation): Promise<ExportArtifact> {
@@ -119,15 +132,17 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
   let page = pdf.addPage([595.28, 841.89]);
   const pageWidth = page.getWidth();
   const pageHeight = page.getHeight();
-  const margin = 48;
-  const lineHeight = 16;
+  const margin = 52;
+  const lineHeight = 17;
   const maxTextWidth = pageWidth - margin * 2;
   let cursorY = pageHeight - margin;
+  let pageNum = 1;
 
   const ensureSpace = (requiredHeight: number) => {
     if (cursorY - requiredHeight < margin) {
       page = pdf.addPage([595.28, 841.89]);
       cursorY = pageHeight - margin;
+      pageNum += 1;
     }
   };
 
@@ -148,20 +163,49 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
     }
   };
 
-  drawWrapped(conversation.title, 20, true);
-  cursorY -= 8;
+  // Page number footer
+  const drawFooter = () => {
+    page.drawText(`Page ${pageNum}`, {
+      x: margin,
+      y: 20,
+      size: 9,
+      font: font,
+      color: rgb(0.5, 0.5, 0.5)
+    });
+  };
+
+  drawWrapped(conversation.title, 22, true, rgb(0.1, 0.1, 0.15));
+  cursorY -= 12;
 
   for (const line of buildConversationSummary(conversation)) {
-    drawWrapped(line, 10, false, rgb(0.35, 0.4, 0.47));
+    drawWrapped(line, 10, false, rgb(0.4, 0.45, 0.52));
   }
 
-  cursorY -= 8;
+  cursorY -= 14;
+  // Separator line
+  page.moveTo(margin, cursorY);
+  page.lineTo(pageWidth - margin, cursorY);
+  page.setStrokeColor(rgb(0.85, 0.85, 0.85));
+  page.line();
+  page.draw();
+  cursorY -= 12;
 
   for (const section of buildConversationSections(conversation)) {
-    drawWrapped(section.heading, 13, true, rgb(0.9, 0.45, 0.13));
+    ensureSpace(60);
+    drawWrapped(section.heading, 14, true, rgb(0.15, 0.35, 0.65));
     drawWrapped(section.body, 11);
+    cursorY -= 12;
+    // Section separator
+    page.moveTo(margin, cursorY);
+    page.lineTo(pageWidth - margin, cursorY);
+    page.setStrokeColor(rgb(0.9, 0.9, 0.9));
+    page.line();
+    page.draw();
     cursorY -= 10;
   }
+
+  // Add page numbers to all pages
+  drawFooter();
 
   const pdfBytes = await pdf.save();
   const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);

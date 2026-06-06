@@ -12,12 +12,32 @@ function escapeXml(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
-function buildParagraph(text: string, options?: { bold?: boolean }): string {
+function escapeXmlForText(value: string): string {
+  // For text content, also handle newlines as XML-compatible
+  return escapeXml(value).replace(/\n/g, '&#xA;');
+}
+
+function buildParagraph(text: string, options?: { bold?: boolean; size?: number; font?: string }): string {
   const normalized = text.replace(/\r/g, '').split('\n');
   const runs = normalized.map((line) => {
-    const safe = escapeXml(line || ' ');
-    const boldTag = options?.bold ? '<w:b/>' : '';
-    return `<w:r><w:rPr>${boldTag}<w:sz w:val="22"/></w:rPr><w:t xml:space="preserve">${safe}</w:t></w:r>`;
+    const safe = escapeXmlForText(line || ' ');
+    const boldTag = options?.bold ? '<w:b w:val="true"/>' : '';
+    const sz = options?.size ?? 22;
+    const font = options?.font ?? 'w:ascii="Noto Sans SC" w:hAnsi="Noto Sans SC" w:cs="Noto Sans SC"';
+    return `<w:r><w:rPr><w:rFonts ${font}/><w:sz w:val="${sz}"/>${boldTag}</w:rPr><w:t xml:space="preserve">${safe}</w:t></w:r>`;
+  }).join('<w:r><w:br/></w:r>');
+
+  return `<w:p>${runs}</w:p>`;
+}
+
+function buildStyledParagraph(text: string, options?: { bold?: boolean; size?: number; color?: string }): string {
+  const normalized = text.replace(/\r/g, '').split('\n');
+  const runs = normalized.map((line) => {
+    const safe = escapeXmlForText(line || ' ');
+    const boldTag = options?.bold ? '<w:b w:val="true"/>' : '';
+    const colorTag = options?.color ? `<w:color w:val="${options.color}"/>` : '';
+    const sz = options?.size ?? 22;
+    return `<w:r><w:rPr><w:rFonts w:ascii="Noto Sans SC" w:hAnsi="Noto Sans SC" w:cs="Noto Sans SC"/><w:sz w:val="${sz}"/>${boldTag}${colorTag}</w:rPr><w:t xml:space="preserve">${safe}</w:t></w:r>`;
   }).join('<w:r><w:br/></w:r>');
 
   return `<w:p>${runs}</w:p>`;
@@ -25,16 +45,23 @@ function buildParagraph(text: string, options?: { bold?: boolean }): string {
 
 function buildDocumentXml(conversation: ChatConversation): string {
   const paragraphs: string[] = [];
-  paragraphs.push(buildParagraph(conversation.title, { bold: true }));
 
+  // Title (bold, larger)
+  paragraphs.push(buildStyledParagraph(conversation.title, { bold: true, size: 28, color: '1A1A2E' }));
+
+  // Summary metadata
   for (const line of buildConversationSummary(conversation)) {
-    paragraphs.push(buildParagraph(line));
+    paragraphs.push(buildStyledParagraph(line, { size: 18, color: '5A5A6E' }));
   }
 
+  // Section separator
+  paragraphs.push('<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="D0D5DD"/></w:pBdr></w:pPr></w:p>');
+
+  // Conversation sections
   for (const section of buildConversationSections(conversation)) {
-    paragraphs.push(buildParagraph(''));
-    paragraphs.push(buildParagraph(section.heading, { bold: true }));
-    paragraphs.push(buildParagraph(section.body));
+    paragraphs.push('<w:p><w:pPr><w:spacing w:after="240" w:before="240"/></w:pPr></w:p>');
+    paragraphs.push(buildStyledParagraph(section.heading, { bold: true, size: 22, color: '1A5276' }));
+    paragraphs.push(buildStyledParagraph(section.body, { size: 18, color: '101828' }));
   }
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -49,6 +76,38 @@ function buildDocumentXml(conversation: ChatConversation): string {
 </w:document>`;
 }
 
+function buildStylesXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault>
+      <w:rPr>
+        <w:rFonts w:ascii="Noto Sans SC" w:hAnsi="Noto Sans SC" w:cs="Noto Sans SC"/>
+        <w:sz w:val="20"/>
+      </w:rPr>
+    </w:rPrDefault>
+    <w:pPrDefault/>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:styleId="Normal">
+    <w:name w:val="Normal"/>
+    <w:rPr>
+      <w:sz w:val="20"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Heading1">
+    <w:name w:val="heading 1"/>
+    <w:pPr>
+      <w:spacing w:after="240" w:before="360"/>
+    </w:pPr>
+    <w:rPr>
+      <w:b w:val="true"/>
+      <w:sz w:val="28"/>
+      <w:color w:val="1A1A2E"/>
+    </w:rPr>
+  </w:style>
+</w:styles>`;
+}
+
 export async function exportConversationToDocx(conversation: ChatConversation): Promise<ExportArtifact> {
   const zip = new JSZip();
 
@@ -57,6 +116,7 @@ export async function exportConversationToDocx(conversation: ChatConversation): 
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
   <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
   <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 </Types>`);
@@ -84,6 +144,7 @@ export async function exportConversationToDocx(conversation: ChatConversation): 
 
   const wordFolder = zip.folder('word');
   wordFolder?.file('document.xml', buildDocumentXml(conversation));
+  wordFolder?.file('styles.xml', buildStylesXml());
   wordFolder?.folder('_rels')?.file('document.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`);
 
@@ -95,4 +156,3 @@ export async function exportConversationToDocx(conversation: ChatConversation): 
     content
   };
 }
-
