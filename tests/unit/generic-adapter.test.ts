@@ -92,4 +92,23 @@ describe('GenericDomAdapter', () => {
     expect(conversations?.[1].id).toMatch(/^url-[a-z0-9]+$/);
     expect(conversations?.[1].id.length).toBeLessThan(18);
   });
+
+  it('exports a grok conversation rendered with conversation/cellInnerDiv containers', async () => {
+    setDocumentUrl('/c/grok-research');
+    setDocumentMarkup(`
+      <main>
+        <div data-testid="conversation">
+          <div data-testid="cellInnerDiv"><p>Please summarize the quarterly export numbers.</p></div>
+          <div data-testid="cellInnerDiv"><p>Here is the summary of the quarterly export numbers you requested.</p></div>
+        </div>
+      </main>
+    `);
+
+    const adapter = createGenericSiteAdapter('grok');
+    const conversation = await adapter?.exportCurrentConversation();
+
+    expect(conversation?.messages).toHaveLength(2);
+    expect(conversation?.messages[0]?.text).toContain('Please summarize the quarterly export numbers.');
+    expect(conversation?.messages[1]?.text).toContain('Here is the summary of the quarterly export numbers');
+  });
 });

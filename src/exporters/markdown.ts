@@ -44,7 +44,7 @@ turndown.addRule('chatgptMath', {
 
 // Enhanced code block rule with language extraction
 turndown.addRule('codeBlockWithLanguage', {
-  filter: (node) => node.nodeName === 'PRE' && node.querySelector('code'),
+  filter: (node) => node.nodeName === 'PRE' && Boolean((node as Element).querySelector('code')),
   replacement: (_content, node) => {
     const pre = node as HTMLPreElement;
     const code = pre.querySelector('code');
@@ -119,7 +119,7 @@ function toMarkdown(message: ChatConversation['messages'][number]): string {
     const details = [attachment.type, attachment.size ? `${attachment.size} bytes` : undefined].filter(Boolean).join(', ');
     const label = details ? `${attachment.name} (${details})` : attachment.name;
     // Handle blob: and data: URLs - replace with readable placeholder
-    if (attachment.url.startsWith('blob:') || attachment.url.startsWith('data:')) {
+    if (attachment.url && (attachment.url.startsWith('blob:') || attachment.url.startsWith('data:'))) {
       return `- 📎 ${label} (local file)`;
     }
     return attachment.url ? `- [${label}](${attachment.url})` : `- ${label}`;

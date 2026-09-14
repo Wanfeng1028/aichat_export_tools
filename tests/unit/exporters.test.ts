@@ -118,6 +118,24 @@ describe('exporters', () => {
     expect(markdown).toContain('- [image.png (image/png)](https://example.com/image.png)');
   });
 
+  it('does not throw when a markdown attachment has no url', async () => {
+    const artifact = await exportConversationToMarkdown({
+      ...conversation,
+      messages: [
+        {
+          id: 'missing-url-attachment',
+          role: 'user',
+          text: 'Please review the attached file.',
+          attachments: [{ name: 'file.txt', type: 'text/plain' }]
+        }
+      ]
+    });
+
+    const markdown = await artifact.content.text();
+    expect(markdown).toContain('Please review the attached file.');
+    expect(markdown).toContain('- file.txt (text/plain)');
+  });
+
   it('includes attachment metadata in plain export sections', () => {
     const sections = buildConversationSections({
       ...conversation,

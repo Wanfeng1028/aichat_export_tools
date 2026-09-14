@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build && node scripts/build-content.mjs && node scripts/copy-manifest.mjs",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@fontsource/noto-sans-sc": "^5.2.9",

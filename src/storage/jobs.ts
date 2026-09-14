@@ -11,10 +11,12 @@ export async function updateJobStatus(id: string, status: JobStatus, error?: str
     return;
   }
 
+  // Keep the recorded error unless the caller explicitly provides a new one
+  // (all current failure transitions pass an error message).
   await db.exportJobs.put({
     ...current,
     status,
-    error,
+    error: error ?? current.error,
     updatedAt: new Date().toISOString()
   });
 }

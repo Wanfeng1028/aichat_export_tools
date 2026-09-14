@@ -59,7 +59,7 @@ const GENERIC_SITE_CONFIGS: GenericSiteConfig[] = [
     label: 'Grok',
     hostnames: ['grok.com', 'x.com'],
     titleSelectors: ['[data-testid="conversation-title"]', 'h1', 'main h2'],
-    messageSelectors: '[data-testid="conversation"] [data-testid="cellInnerDiv"]',
+    messageSelectors: ['[data-testid="conversation"] [data-testid="cellInnerDiv"]'],
     conversationPathHints: ['/c/', '/chat/', '/i/grok'],
     requirePathHint: true
   },

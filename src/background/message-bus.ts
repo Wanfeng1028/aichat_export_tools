@@ -142,17 +142,38 @@ async function recordSuccess(
   });
 }
 
+const TAB_COMPLETE_TIMEOUT_MS = 30_000;
+
 async function waitForTabComplete(tabId: number): Promise<void> {
   const existing = await chrome.tabs.get(tabId);
   if (existing.status === 'complete') return;
-  await new Promise<void>((resolve) => {
-    const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
-      if (updatedTabId === tabId && changeInfo.status === 'complete') {
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }
+
+  await new Promise<void>((resolve, reject) => {
+    const onUpdated = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (updatedTabId !== tabId || changeInfo.status !== 'complete') return;
+      cleanup();
+      resolve();
     };
-    chrome.tabs.onUpdated.addListener(listener);
+
+    const onRemoved = (removedTabId: number) => {
+      if (removedTabId !== tabId) return;
+      cleanup();
+      reject(new Error(`Tab ${tabId} was closed before it finished loading.`));
+    };
+
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out after ${TAB_COMPLETE_TIMEOUT_MS / 1000}s waiting for tab ${tabId} to finish loading.`));
+    }, TAB_COMPLETE_TIMEOUT_MS);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+    };
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
   });
 }
 
@@ -181,7 +202,7 @@ async function exportConversationFromUrl(url: string): Promise<ChatConversation>
 
     throw lastError instanceof Error ? lastError : new Error(`Failed to export ${url}.`);
   } finally {
-    await chrome.tabs.remove(tab.id);
+    await chrome.tabs.remove(tab.id).catch(() => undefined);
   }
 }
 
@@ -224,6 +245,16 @@ async function exportSelectedConversationsFlow(sourceTabId: number, format: Expo
   const batchJob = createBatchJobRecord(conversations[0]?.site ?? 'chatgpt', format, conversations.length);
   await upsertJobRecord(batchJob);
   await updateJobStatus(batchJob.id, 'running');
+
+  const seenConversationUrls = new Set<string>();
+  for (const summary of conversations) {
+    if (seenConversationUrls.has(summary.url)) {
+      const errorMessage = 'Batch export detected duplicate conversation URLs (adapter did not provide distinct conversation links); aborting to avoid duplicate exports';
+      await updateJobStatus(batchJob.id, 'failed', errorMessage);
+      throw new Error(errorMessage);
+    }
+    seenConversationUrls.add(summary.url);
+  }
 
   for (const summary of conversations) {
     const job = createJobRecord({ id: summary.id, site: summary.site, title: summary.title, exportedAt: new Date().toISOString() }, format);

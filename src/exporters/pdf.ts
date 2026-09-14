@@ -136,13 +136,11 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
   const lineHeight = 17;
   const maxTextWidth = pageWidth - margin * 2;
   let cursorY = pageHeight - margin;
-  let pageNum = 1;
 
   const ensureSpace = (requiredHeight: number) => {
     if (cursorY - requiredHeight < margin) {
       page = pdf.addPage([595.28, 841.89]);
       cursorY = pageHeight - margin;
-      pageNum += 1;
     }
   };
 
@@ -161,17 +159,6 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
       });
       cursorY -= lineHeight;
     }
-  };
-
-  // Page number footer
-  const drawFooter = () => {
-    page.drawText(`Page ${pageNum}`, {
-      x: margin,
-      y: 20,
-      size: 9,
-      font: font,
-      color: rgb(0.5, 0.5, 0.5)
-    });
   };
 
   const drawDivider = (yOffset: number, strokeColor = rgb(0.85, 0.85, 0.85)) => {
@@ -204,7 +191,16 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
   }
 
   // Add page numbers to all pages
-  drawFooter();
+  const pages = pdf.getPages();
+  pages.forEach((pdfPage, pageIndex) => {
+    pdfPage.drawText(`Page ${pageIndex + 1} / ${pages.length}`, {
+      x: margin,
+      y: 20,
+      size: 9,
+      font: font,
+      color: rgb(0.5, 0.5, 0.5)
+    });
+  });
 
   const pdfBytes = await pdf.save();
   const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
