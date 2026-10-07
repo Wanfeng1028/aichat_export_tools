@@ -295,7 +295,7 @@ async function exportSelectedConversationsFlow(sourceTabId: number, format: Expo
       savedAs: download.savedAs
     });
     await updateJobStatus(batchJob.id, 'completed');
-    return { archiveFilename: artifact.filename, exportedCount: successful.length, failedCount, savedAs: download.savedAs };
+    return { archiveFilename: artifact.filename, exportedCount: artifact.exportedCount, failedCount: failedCount + artifact.failedCount, savedAs: download.savedAs };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unexpected export error';
     await updateJobStatus(batchJob.id, 'failed', errorMessage);

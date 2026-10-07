@@ -175,9 +175,33 @@ export function DashboardApp() {
 
   async function refreshPageContext() {
     if (sourceTabId) {
-      const tab = await chrome.tabs.get(sourceTabId);
+      let tab: chrome.tabs.Tab;
+      try {
+        tab = await chrome.tabs.get(sourceTabId);
+      } catch {
+        // 源标签页已被关闭：清空站点上下文，避免用陈旧状态继续导出
+        setSourceTabId(null);
+        setSourceUrl(null);
+        setConversations([]);
+        setSelectedIds([]);
+        setPermissionGranted(false);
+        setScanMessage(translate(language, 'sourceTabMissing'));
+        await refreshHistoryAndJobs();
+        return;
+      }
+
       const nextUrl = tab.url ?? null;
-      const detectedSite = detectSupportedSiteFromUrl(nextUrl) ?? 'chatgpt';
+      const detectedSite = detectSupportedSiteFromUrl(nextUrl);
+      if (!detectedSite) {
+        // 识别不出支持站点时必须显式停止，兜底成 'chatgpt' 会对错误站点发消息
+        setSourceUrl(nextUrl);
+        setPermissionGranted(false);
+        setConversations([]);
+        setSelectedIds([]);
+        setScanMessage(translate(language, 'noActiveSiteTab'));
+        await refreshHistoryAndJobs();
+        return;
+      }
       setSourceUrl(nextUrl);
       setSourceSite(detectedSite);
       setActiveSite(detectedSite);
@@ -255,9 +279,11 @@ export function DashboardApp() {
     setBusy(true);
 
     try {
+      // 先确保权限再查询状态：首次使用时内容脚本尚未注入，先查状态必然抛错
+      if (!(await ensurePermissions())) return;
       const status = await getCurrentStatus();
       const needsFallback = !status?.canExportCurrentConversation;
-      if (!(await ensurePermissions(needsFallback))) return;
+      if (needsFallback && !(await ensurePermissions(true))) return;
 
       if (!needsFallback) {
         markStep(56, isZh ? '正在抓取当前会话内容...' : 'Capturing current conversation...');
@@ -268,7 +294,7 @@ export function DashboardApp() {
           await refreshHistoryAndJobs();
           return;
         }
-        failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
+        failProgress(response.ok ? translate(language, 'unknownResponse') : response.error);
         return;
       }
 
@@ -291,7 +317,7 @@ export function DashboardApp() {
         completeProgress(translate(language, 'exportedConversation', { title: response.conversation.title }));
         await refreshHistoryAndJobs();
       } else {
-        failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
+        failProgress(response.ok ? translate(language, 'unknownResponse') : response.error);
       }
     } catch (exportError) {
       failProgress(exportError instanceof Error ? exportError.message : (isZh ? '导出失败。' : 'Export failed.'));

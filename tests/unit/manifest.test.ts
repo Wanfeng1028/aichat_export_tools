@@ -16,4 +16,9 @@ describe('extension manifest', () => {
 
     expect(manifest.content_scripts[0].matches).toEqual(manifest.optional_host_permissions);
   });
+
+  it('keeps web-accessible resources scoped to supported sites and requests no unused permissions', () => {
+    expect(manifest.web_accessible_resources[0].matches).toEqual(manifest.optional_host_permissions);
+    expect(manifest.optional_permissions).toEqual(['tabs']);
+  });
 });

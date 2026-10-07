@@ -42,7 +42,7 @@ export const manifest = {
     type: 'module'
   },
   permissions: ['storage', 'downloads', 'scripting', 'activeTab'],
-  optional_permissions: ['tabs', 'notifications'],
+  optional_permissions: ['tabs'],
   optional_host_permissions: supportedMatches,
   host_permissions: [],
   content_scripts: [
@@ -55,14 +55,9 @@ export const manifest = {
   web_accessible_resources: [
     {
       resources: ['src/content/bridge.js', 'src/ui/popup/index.html', 'assets/*', 'logo.png'],
-      matches: ['<all_urls>']
+      // 与 content_scripts 的匹配范围保持一致，不向任意网站开放扩展资源
+      matches: supportedMatches
     }
   ],
-  options_page: 'src/ui/options/index.html',
-  browser_specific_settings: {
-    gecko: {
-      id: 'ai-chat-exporter@example.com',
-      strict_min_version: '121.0'
-    }
-  }
+  options_page: 'src/ui/options/index.html'
 } as const;

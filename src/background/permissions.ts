@@ -12,19 +12,31 @@ const permissionOrigins: Record<SupportedSite, string[]> = {
   yiyan: ['https://yiyan.baidu.com/*', 'https://wenxin.baidu.com/*']
 };
 
+// 站点识别必须按主机名精确匹配（含子域）。用 includes 会把 netflix.com（含 "x.com"）、
+// notchatgpt.com 这类无关站点误判成受支持站点，进而弹出错误站点的授权框
+const siteHosts: Record<SupportedSite, string[]> = {
+  chatgpt: ['chatgpt.com'],
+  claude: ['claude.ai'],
+  gemini: ['gemini.google.com'],
+  kimi: ['kimi.moonshot.cn', 'kimi.com'],
+  deepseek: ['chat.deepseek.com'],
+  grok: ['grok.com', 'x.com'],
+  doubao: ['doubao.com'],
+  qianwen: ['tongyi.aliyun.com', 'qianwen.aliyun.com', 'tongyi.com', 'qwen.ai', 'qianwen.com'],
+  yiyan: ['yiyan.baidu.com', 'wenxin.baidu.com']
+};
+
+function hostnameMatchesSite(hostname: string, hosts: string[]): boolean {
+  return hosts.some((host) => hostname === host || hostname.endsWith(`.${host}`));
+}
+
 export function detectSupportedSiteFromUrl(url?: string | null): SupportedSite | null {
   if (!url) return null;
   try {
-    const hostname = new URL(url).hostname;
-    if (hostname.includes('chatgpt.com')) return 'chatgpt';
-    if (hostname.includes('claude.ai')) return 'claude';
-    if (hostname.includes('gemini.google.com')) return 'gemini';
-    if (hostname.includes('kimi.moonshot.cn') || hostname === 'kimi.com' || hostname === 'www.kimi.com') return 'kimi';
-    if (hostname.includes('chat.deepseek.com')) return 'deepseek';
-    if (hostname.includes('grok.com') || hostname.includes('x.com')) return 'grok';
-    if (hostname.includes('doubao.com')) return 'doubao';
-    if (hostname.includes('tongyi.aliyun.com') || hostname.includes('qianwen.aliyun.com') || hostname === 'tongyi.com' || hostname === 'www.tongyi.com' || hostname === 'qwen.ai' || hostname === 'www.qwen.ai' || hostname === 'qianwen.com' || hostname === 'www.qianwen.com') return 'qianwen';
-    if (hostname.includes('yiyan.baidu.com') || hostname.includes('wenxin.baidu.com')) return 'yiyan';
+    const hostname = new URL(url).hostname.toLowerCase();
+    for (const [site, hosts] of Object.entries(siteHosts) as Array<[SupportedSite, string[]]>) {
+      if (hostnameMatchesSite(hostname, hosts)) return site;
+    }
     return null;
   } catch {
     return null;

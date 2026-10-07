@@ -130,7 +130,15 @@ export function PopupApp() {
 
     const tab = await chrome.tabs.get(tabId);
     const nextUrl = tab.url ?? null;
-    const detectedSite = detectSupportedSiteFromUrl(nextUrl) ?? 'chatgpt';
+    const detectedSite = detectSupportedSiteFromUrl(nextUrl);
+    if (!detectedSite) {
+      // 识别不出支持站点时必须显式停止，兜底成 'chatgpt' 会对错误站点发消息
+      setStatusText(translate(language, 'noActiveSiteTab'));
+      setSourceUrl(nextUrl);
+      setPermissionGranted(false);
+      setConversations([]);
+      return;
+    }
     setSourceUrl(nextUrl);
     setSourceSite(detectedSite);
     setActiveSite(detectedSite);
@@ -191,7 +199,7 @@ export function PopupApp() {
 
     const response = await callRuntime({ type: 'SCAN_CONVERSATIONS', sourceTabId });
     if (!(response.ok && 'conversations' in response)) {
-      throw new Error(response.ok ? translate(language, 'scanFinished') : response.error);
+      throw new Error(response.ok ? translate(language, 'unknownScanResponse') : response.error);
     }
 
     setConversations(response.conversations);
@@ -304,9 +312,12 @@ export function PopupApp() {
     startProgress(translate(language, 'exportingCurrentAs', { format: format.toUpperCase() }));
     setBusy(true);
     try {
+      // 先确保权限再查询状态：首次使用时内容脚本尚未注入，先查状态必然抛错，
+      // 而真正会弹 Chrome 授权框的 ensureSitePermission 永远执行不到
+      if (!(await ensureSitePermission())) return;
       const status = await getCurrentStatus();
       const needsFallback = !status?.canExportCurrentConversation;
-      if (!(await ensureSitePermission(needsFallback))) return;
+      if (needsFallback && !(await ensureSitePermission(true))) return;
 
       if (!needsFallback) {
         markStep(52, isZh ? '正在抓取当前会话内容...' : 'Capturing current conversation...');
@@ -317,7 +328,7 @@ export function PopupApp() {
           completeProgress(translate(language, 'exportedConversation', { title: response.conversation.title }));
           return;
         }
-        failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
+        failProgress(response.ok ? translate(language, 'unknownResponse') : response.error);
         return;
       }
 
@@ -340,7 +351,7 @@ export function PopupApp() {
         markStep(92, isZh ? '导出内容已生成，正在落盘...' : 'Export artifact generated. Saving file...');
         completeProgress(translate(language, 'exportedConversation', { title: response.conversation.title }));
       } else {
-        failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
+        failProgress(response.ok ? translate(language, 'unknownResponse') : response.error);
       }
     } catch (error) {
       failProgress(error instanceof Error ? error.message : (isZh ? '导出失败。' : 'Export failed.'));
@@ -394,7 +405,7 @@ export function PopupApp() {
         markStep(92, isZh ? '批量归档已生成，正在落盘...' : 'Batch archive generated. Saving file...');
         completeProgress(translate(language, 'batchReady', { filename: response.batch.archiveFilename, success: response.batch.exportedCount, failed: response.batch.failedCount }));
       } else {
-        failProgress(response.ok ? translate(language, 'exportFinished') : response.error);
+        failProgress(response.ok ? translate(language, 'unknownBatchResponse') : response.error);
       }
     } catch (error) {
       failProgress(error instanceof Error ? error.message : (isZh ? '批量导出失败。' : 'Batch export failed.'));
@@ -408,7 +419,7 @@ export function PopupApp() {
   }
 
   const shellClassName = popupParams.embedded ? 'w-full min-h-full bg-transparent p-0 text-ink' : 'w-[500px] min-h-screen bg-transparent p-4 text-ink';
-  const cardClassName = popupParams.embedded ? 'h-full overflow-hidden rounded-none border-0 bg-white/92 shadow-none backdrop-blur' : 'overflow-hidden rounded-[30px] border border-white/70 bg-white/85 shadow-panel backdrop-blur';
+  const cardClassName = popupParams.embedded ? 'h-full overflow-hidden rounded-none border-0 bg-white/90 shadow-none backdrop-blur' : 'overflow-hidden rounded-[30px] border border-white/70 bg-white/85 shadow-panel backdrop-blur';
   const selectedSiteLabel = siteOptions.find((site) => site.value === activeSite)?.label ?? activeSite;
   const sourceSiteLabel = siteOptions.find((site) => site.value === sourceSite)?.label ?? sourceSite;
 
