@@ -52,9 +52,28 @@ export function buildAttachmentManifest(conversation: ChatConversation): Attachm
   );
 }
 
+// 粗粒度 HTML→纯文本回退：仅用于 message.text 为空而 html 有内容的消息，
+// 保证 PDF/DOCX/ZIP/HTML 与 Markdown 导出内容一致。不追求保真。
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6]|tr|blockquote)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export function buildConversationSections(conversation: ChatConversation): ExportSection[] {
   return conversation.messages.map((message) => {
-    const body = message.text.trim();
+    const body = message.text.trim() || (message.html ? htmlToPlainText(message.html) : '');
     const attachments = formatAttachments(message);
     const placeholder = attachments.length > 0 ? '[Attachment-only message: files are listed below]' : '[Empty message]';
 

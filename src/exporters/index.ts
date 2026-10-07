@@ -3,7 +3,7 @@ import { exportConversationToMarkdown } from './markdown';
 import { exportConversationToPdf } from './pdf';
 import { exportConversationToDocx } from './docx';
 import { exportConversationToZip } from './zip';
-import { exportConversationBatch as exportConversationBatchImpl } from './batch';
+import { exportConversationBatch as exportConversationBatchImpl, type BatchExportArtifact } from './batch';
 
 export async function exportConversation(conversation: ChatConversation, format: ExportFormat): Promise<ExportArtifact> {
   if (format === 'markdown') {
@@ -25,6 +25,6 @@ export async function exportConversation(conversation: ChatConversation, format:
   throw new Error(`Unsupported export format: ${format}`);
 }
 
-export async function exportConversationBatch(conversations: ChatConversation[], format: ExportFormat): Promise<ExportArtifact> {
+export async function exportConversationBatch(conversations: ChatConversation[], format: ExportFormat): Promise<BatchExportArtifact> {
   return exportConversationBatchImpl(conversations, format);
 }

@@ -1,12 +1,29 @@
 import type { ChatConversation } from './types';
 import { defaultSettings, getSettings } from '../storage/settings';
 
+// Windows 保留设备名（不论扩展名）不能直接作为文件名
+const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const MAX_FILENAME_SEGMENT_LENGTH = 80;
+
 export function sanitizeFilenameSegment(value: string, fallback = 'untitled'): string {
-  return value
-    .replace(/[<>:"/\\|?*]+/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 80) || fallback;
+  const withoutControlChars = value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  // 按码点截断，避免切断代理对（emoji 等）
+  const truncated = Array.from(
+    withoutControlChars
+      .replace(/[<>:"/\\|?*]+/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+  )
+    .slice(0, MAX_FILENAME_SEGMENT_LENGTH)
+    .join('');
+
+  // 截断可能重新制造结尾的点/空格，Windows 会吞掉它们
+  let cleaned = truncated.replace(/[. ]+$/g, '');
+  if (WINDOWS_RESERVED_NAMES.test(cleaned)) {
+    cleaned = `${cleaned}_`;
+  }
+
+  return cleaned || fallback;
 }
 
 function buildTemplateTokens(conversation: ChatConversation) {

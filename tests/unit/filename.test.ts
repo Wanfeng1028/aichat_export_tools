@@ -23,4 +23,18 @@ describe('buildConversationFilename', () => {
       '2026-04-09__chatgpt__Plan- ship - export -alpha-__conv-1'
     );
   });
+
+  it('sanitizes windows reserved device names', () => {
+    expect(applyFilenameTemplate({ ...baseConversation, title: 'CON' }, '{title}')).toBe('CON_');
+    expect(applyFilenameTemplate({ ...baseConversation, title: 'lpt1' }, '{title}')).toBe('lpt1_');
+  });
+
+  it('truncates long titles on code-point boundaries', () => {
+    const title = `${'x'.repeat(79)}😀😀`;
+    expect(applyFilenameTemplate({ ...baseConversation, title }, '{title}')).toBe(`${'x'.repeat(79)}😀`);
+  });
+
+  it('strips control characters and trailing dots and spaces', () => {
+    expect(applyFilenameTemplate({ ...baseConversation, title: 'bad\x01\x02name... ' }, '{title}')).toBe('badname');
+  });
 });

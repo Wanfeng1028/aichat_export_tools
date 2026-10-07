@@ -5,6 +5,8 @@ import { buildConversationSections, buildConversationSummary } from './shared';
 
 function escapeXml(value: string): string {
   return value
+    // XML 1.0 不允许的控制字符：留着会让 Word 报“内容有问题”而拒绝打开整份文档
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -17,37 +19,29 @@ function escapeXmlForText(value: string): string {
   return escapeXml(value).replace(/\n/g, '&#xA;');
 }
 
-function buildParagraph(text: string, options?: { bold?: boolean; size?: number; font?: string }): string {
-  const normalized = text.replace(/\r/g, '').split('\n');
-  const runs = normalized.map((line) => {
-    const safe = escapeXmlForText(line || ' ');
-    const boldTag = options?.bold ? '<w:b w:val="true"/>' : '';
-    const sz = options?.size ?? 22;
-    const font = options?.font ?? 'w:ascii="Noto Sans SC" w:hAnsi="Noto Sans SC" w:cs="Noto Sans SC"';
-    return `<w:r><w:rPr><w:rFonts ${font}/><w:sz w:val="${sz}"/>${boldTag}</w:rPr><w:t xml:space="preserve">${safe}</w:t></w:r>`;
-  }).join('<w:r><w:br/></w:r>');
+// Word 对中文使用 eastAsia 字体槽，必须显式声明，否则回退主题字体
+const DOCUMENT_FONT = 'w:ascii="Noto Sans SC" w:eastAsia="Noto Sans SC" w:hAnsi="Noto Sans SC" w:cs="Noto Sans SC"';
 
-  return `<w:p>${runs}</w:p>`;
-}
-
-function buildStyledParagraph(text: string, options?: { bold?: boolean; size?: number; color?: string }): string {
+function buildStyledParagraph(text: string, options?: { bold?: boolean; size?: number; color?: string; style?: string }): string {
   const normalized = text.replace(/\r/g, '').split('\n');
   const runs = normalized.map((line) => {
     const safe = escapeXmlForText(line || ' ');
     const boldTag = options?.bold ? '<w:b w:val="true"/>' : '';
     const colorTag = options?.color ? `<w:color w:val="${options.color}"/>` : '';
     const sz = options?.size ?? 22;
-    return `<w:r><w:rPr><w:rFonts w:ascii="Noto Sans SC" w:hAnsi="Noto Sans SC" w:cs="Noto Sans SC"/><w:sz w:val="${sz}"/>${boldTag}${colorTag}</w:rPr><w:t xml:space="preserve">${safe}</w:t></w:r>`;
+    return `<w:r><w:rPr><w:rFonts ${DOCUMENT_FONT}/><w:sz w:val="${sz}"/>${boldTag}${colorTag}</w:rPr><w:t xml:space="preserve">${safe}</w:t></w:r>`;
   }).join('<w:r><w:br/></w:r>');
 
-  return `<w:p>${runs}</w:p>`;
+  // pStyle 让标题进入 Word 导航窗格 / 目录结构
+  const styleTag = options?.style ? `<w:pPr><w:pStyle w:val="${options.style}"/></w:pPr>` : '';
+  return `<w:p>${styleTag}${runs}</w:p>`;
 }
 
 function buildDocumentXml(conversation: ChatConversation): string {
   const paragraphs: string[] = [];
 
-  // Title (bold, larger)
-  paragraphs.push(buildStyledParagraph(conversation.title, { bold: true, size: 28, color: '1A1A2E' }));
+  // Title (bold, larger, registered as Heading1 so Word's navigation pane picks it up)
+  paragraphs.push(buildStyledParagraph(conversation.title, { bold: true, size: 28, color: '1A1A2E', style: 'Heading1' }));
 
   // Summary metadata
   for (const line of buildConversationSummary(conversation)) {
@@ -82,7 +76,7 @@ function buildStylesXml(): string {
   <w:docDefaults>
     <w:rPrDefault>
       <w:rPr>
-        <w:rFonts w:ascii="Noto Sans SC" w:hAnsi="Noto Sans SC" w:cs="Noto Sans SC"/>
+        <w:rFonts w:ascii="Noto Sans SC" w:eastAsia="Noto Sans SC" w:hAnsi="Noto Sans SC" w:cs="Noto Sans SC"/>
         <w:sz w:val="20"/>
       </w:rPr>
     </w:rPrDefault>
@@ -133,8 +127,8 @@ export async function exportConversationToDocx(conversation: ChatConversation): 
   <dc:title>${escapeXml(conversation.title)}</dc:title>
   <dc:creator>AI Chat Exporter</dc:creator>
   <cp:lastModifiedBy>AI Chat Exporter</cp:lastModifiedBy>
-  <dcterms:created xsi:type="dcterms:W3CDTF">${conversation.exportedAt}</dcterms:created>
-  <dcterms:modified xsi:type="dcterms:W3CDTF">${conversation.exportedAt}</dcterms:modified>
+  <dcterms:created xsi:type="dcterms:W3CDTF">${escapeXml(conversation.exportedAt)}</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">${escapeXml(conversation.exportedAt)}</dcterms:modified>
 </cp:coreProperties>`);
 
   zip.folder('docProps')?.file('app.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

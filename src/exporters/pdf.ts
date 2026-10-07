@@ -36,6 +36,14 @@ function isCjkToken(token: string): boolean {
   return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(token);
 }
 
+// WinAnsi（Helvetica 等标准字体）可编码字符之外的部分；超出范围的字符直接 drawText 会抛错
+const WINANSI_EXTRA_CHARS = '\u20AC\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u017D\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u017E\u0178';
+const NON_WINANSI_PATTERN = new RegExp(`[^\\u0000-\\u00FF${WINANSI_EXTRA_CHARS}]`, 'gu');
+
+export function sanitizeTextForStandardFont(text: string): string {
+  return text.replace(NON_WINANSI_PATTERN, '?');
+}
+
 export function splitForPdfWrap(text: string): string[] {
   return text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+[，。！？；：、,.!?;:]?|\p{P}+|[A-Za-z0-9_:/.@#%+\-=]+|\s+|./gu) ?? [];
 }
@@ -92,7 +100,7 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
   return lines;
 }
 
-async function resolvePdfFonts(pdf: PDFDocument): Promise<{ font: PDFFont; boldFont: PDFFont }> {
+async function resolvePdfFonts(pdf: PDFDocument): Promise<{ font: PDFFont; boldFont: PDFFont; isStandardFontFallback: boolean }> {
   pdf.registerFontkit(fontkit);
 
   // Priority order: NotoSansSC (better CJK coverage) → Deng (fallback) → Helvetica (last resort)
@@ -110,24 +118,28 @@ async function resolvePdfFonts(pdf: PDFDocument): Promise<{ font: PDFFont; boldF
 
       return {
         font: await pdf.embedFont(regularFontBytes, { subset: true }),
-        boldFont: await pdf.embedFont(boldFontBytes, { subset: true })
+        boldFont: await pdf.embedFont(boldFontBytes, { subset: true }),
+        isStandardFontFallback: false
       };
     } catch (error) {
       console.warn(`AI Chat Exporter failed to load ${label} font, trying next source. Error:`, error);
     }
   }
 
-  // Last resort: standard Helvetica (no CJK support)
-  console.warn('AI Chat Exporter could not load any bundled PDF fonts. Falling back to Helvetica; CJK text will not render correctly.');
+  // Last resort: standard Helvetica (no CJK support). 调用方必须用 sanitizeTextForStandardFont 过滤文本，
+  // 否则 drawText 遇到 CJK 等字符会直接抛 WinAnsi 编码错误
+  console.warn('AI Chat Exporter could not load any bundled PDF fonts. Falling back to Helvetica; CJK text will be replaced with "?".');
   return {
     font: await pdf.embedFont(StandardFonts.Helvetica),
-    boldFont: await pdf.embedFont(StandardFonts.HelveticaBold)
+    boldFont: await pdf.embedFont(StandardFonts.HelveticaBold),
+    isStandardFontFallback: true
   };
 }
 
 export async function exportConversationToPdf(conversation: ChatConversation): Promise<ExportArtifact> {
   const pdf = await PDFDocument.create();
-  const { font, boldFont } = await resolvePdfFonts(pdf);
+  const { font, boldFont, isStandardFontFallback } = await resolvePdfFonts(pdf);
+  const toDrawable = (text: string) => (isStandardFontFallback ? sanitizeTextForStandardFont(text) : text);
 
   let page = pdf.addPage([595.28, 841.89]);
   const pageWidth = page.getWidth();
@@ -146,7 +158,7 @@ export async function exportConversationToPdf(conversation: ChatConversation): P
 
   const drawWrapped = (text: string, size = 11, isBold = false, color = rgb(0.1, 0.15, 0.2)) => {
     const activeFont = isBold ? boldFont : font;
-    const lines = wrapText(text, activeFont, size, maxTextWidth);
+    const lines = wrapText(toDrawable(text), activeFont, size, maxTextWidth);
 
     for (const line of lines) {
       ensureSpace(lineHeight + 4);

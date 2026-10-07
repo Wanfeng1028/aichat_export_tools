@@ -3,12 +3,27 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import JSZip from 'jszip';
 import { exportConversationBatch } from '../../src/exporters/batch';
+import { exportConversationToDocx } from '../../src/exporters/docx';
 import { buildConversationHtml } from '../../src/exporters/html-template';
 import { exportConversationToMarkdown } from '../../src/exporters/markdown';
-import { splitForPdfWrap } from '../../src/exporters/pdf';
+import { sanitizeTextForStandardFont, splitForPdfWrap } from '../../src/exporters/pdf';
 import { exportConversationToZip } from '../../src/exporters/zip';
 import { buildConversationSections } from '../../src/exporters/shared';
 import type { ChatConversation } from '../../src/core/types';
+
+// 让指定标题的会话在 PDF 导出时失败，用于验证批量导出的部分失败容错
+vi.mock('../../src/exporters/pdf', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/exporters/pdf')>();
+  return {
+    ...actual,
+    exportConversationToPdf: vi.fn(async (conversation: ChatConversation) => {
+      if (conversation.title === 'Batch failure trigger') {
+        throw new Error('simulated pdf failure');
+      }
+      return actual.exportConversationToPdf(conversation);
+    })
+  };
+});
 
 const conversation: ChatConversation = {
   id: 'conversation-42',
@@ -257,5 +272,118 @@ describe('exporters', () => {
     const zip = await JSZip.loadAsync(await artifact.content.arrayBuffer());
 
     expect(Object.keys(zip.files)).toContain(`${'A'.repeat(80)}__conversation-42/`);
+  });
+
+  it('lengthens markdown code fences when the code contains a fence', async () => {
+    const artifact = await exportConversationToMarkdown({
+      ...conversation,
+      messages: [
+        { id: 'fence', role: 'assistant', text: '', html: '<pre><code>```\ninner</code></pre>' }
+      ]
+    });
+    const markdown = await artifact.content.text();
+    expect(markdown).toContain('````\n```\ninner\n````');
+  });
+
+  it('does not duplicate the first row for tables without thead', async () => {
+    const artifact = await exportConversationToMarkdown({
+      ...conversation,
+      messages: [
+        { id: 'plain-table', role: 'assistant', text: '', html: '<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>' }
+      ]
+    });
+    const markdown = await artifact.content.text();
+    const tableLines = markdown.split('\n').filter((line) => line.startsWith('|'));
+    expect(tableLines).toEqual(['| A | B |', '| --- | --- |', '| 1 | 2 |']);
+  });
+
+  it('renders tables whose thead row uses td cells', async () => {
+    const artifact = await exportConversationToMarkdown({
+      ...conversation,
+      messages: [
+        { id: 'td-table', role: 'assistant', text: '', html: '<table><thead><tr><td>H1</td><td>H2</td></tr></thead><tbody><tr><td>a</td><td>b</td></tr></tbody></table>' }
+      ]
+    });
+    const markdown = await artifact.content.text();
+    expect(markdown).toContain('| H1 | H2 |');
+    expect(markdown).toContain('| a | b |');
+  });
+
+  it('escapes pipes and newlines inside table cells', async () => {
+    const artifact = await exportConversationToMarkdown({
+      ...conversation,
+      messages: [
+        { id: 'pipe-table', role: 'assistant', text: '', html: '<table><thead><tr><th>K</th></tr></thead><tbody><tr><td>a | b\nc</td></tr></tbody></table>' }
+      ]
+    });
+    const markdown = await artifact.content.text();
+    expect(markdown).toContain('| a \\| b c |');
+  });
+
+  it('escapes markdown link syntax in attachment labels and urls', async () => {
+    const artifact = await exportConversationToMarkdown({
+      ...conversation,
+      messages: [
+        {
+          id: 'weird-attachment',
+          role: 'user',
+          text: 'see attachment',
+          attachments: [{ name: 'note [1].txt', type: 'text/plain', url: 'https://example.com/a(1).txt' }]
+        }
+      ]
+    });
+    const markdown = await artifact.content.text();
+    expect(markdown).toContain('- [note \\[1\\].txt (text/plain)](https://example.com/a%281%29.txt)');
+  });
+
+  it('falls back to html text when message text is empty in shared sections', () => {
+    const sections = buildConversationSections({
+      ...conversation,
+      messages: [{ id: 'formula', role: 'user', text: '', html: '<p>E = mc<sup>2</sup></p>' }]
+    });
+    expect(sections[0].body).toContain('E = mc');
+    expect(sections[0].body).not.toContain('[Empty message]');
+  });
+
+  it('strips xml-invalid control characters from docx output', async () => {
+    const artifact = await exportConversationToDocx({
+      ...conversation,
+      messages: [{ id: 'ctrl', role: 'user', text: 'bad \x01\x02control \x0Bchars' }]
+    });
+    const zip = await JSZip.loadAsync(await artifact.content.arrayBuffer());
+    const documentXml = await zip.file('word/document.xml')!.async('text');
+    expect(documentXml).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F]/);
+    expect(documentXml).toContain('bad control chars');
+    expect(documentXml).toContain('w:pStyle w:val="Heading1"');
+    const stylesXml = await zip.file('word/styles.xml')!.async('text');
+    expect(stylesXml).toContain('w:eastAsia="Noto Sans SC"');
+  });
+
+  it('skips a failing conversation in batch export and reports counts', async () => {
+    const artifact = await exportConversationBatch([
+      { ...conversation, id: 'conv-broken', title: 'Batch failure trigger', messages: [{ id: 'b1', role: 'user', text: 'x' }] },
+      { ...conversation, id: 'conv-fine', title: 'Batch survivor', messages: [{ id: 's1', role: 'user', text: 'y' }] }
+    ], 'pdf');
+
+    expect(artifact.exportedCount).toBe(1);
+    expect(artifact.failedCount).toBe(1);
+
+    const zip = await JSZip.loadAsync(await artifact.content.arrayBuffer());
+    expect(await zip.file('Batch failure trigger__conv-broken/error.txt')!.async('text')).toContain('simulated pdf failure');
+    expect(Object.keys(zip.files)).toContain('Batch survivor__conv-fine/chatgpt__Batch survivor__2026-04-09T01-02-03.000Z.pdf');
+  });
+
+  it('deduplicates identical batch folder names', async () => {
+    const artifact = await exportConversationBatch([{ ...conversation }, { ...conversation }], 'markdown');
+    const zip = await JSZip.loadAsync(await artifact.content.arrayBuffer());
+    const folders = Object.keys(zip.files).filter((name) => name.endsWith('/'));
+    expect(folders).toEqual(expect.arrayContaining([
+      'Quarterly export review__conversation-42/',
+      'Quarterly export review__conversation-42-2/'
+    ]));
+  });
+
+  it('replaces non-winansi characters for standard pdf fonts', () => {
+    expect(sanitizeTextForStandardFont('中文 hello 世界')).toBe('?? hello ??');
   });
 });

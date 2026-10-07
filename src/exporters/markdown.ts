@@ -58,9 +58,23 @@ turndown.addRule('codeBlockWithLanguage', {
     // Get code text content
     const text = code.textContent || '';
 
-    return `\n\`\`\`${lang || ''}\n${text}\n\`\`\`\n\n`;
+    // 代码内容本身含反引号围栏时，加长围栏避免提前闭合（与 turndown 内置规则一致）
+    const fenceMatch = text.match(/^`{3,}/gm);
+    const fenceLength = fenceMatch ? Math.max(...fenceMatch.map((match) => match.length)) + 1 : 3;
+    const fence = '`'.repeat(fenceLength);
+
+    return `\n${fence}${lang || ''}\n${text.replace(/\n$/, '')}\n${fence}\n\n`;
   }
 });
+
+// Escape characters that would break GFM table structure
+function formatTableCell(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ')
+    .trim();
+}
 
 // Better table rule
 turndown.addRule('htmlTable', {
@@ -69,20 +83,21 @@ turndown.addRule('htmlTable', {
     const table = node as HTMLTableElement;
     if (!table.rows || table.rows.length === 0) return _content;
 
-    // Extract headers
+    // Extract headers. 表头单元格可能是 th 或 td（如 thead 内使用 td 的站点输出）
+    const headerRow = table.tHead?.rows[0] ?? null;
+    const headerCells = headerRow
+      ? headerRow.querySelectorAll('th, td')
+      : table.rows[0]?.querySelectorAll('th, td');
     const headers: string[] = [];
-    const headerRow = table.querySelector('thead tr');
-    const headerCells = headerRow?.querySelectorAll('th') || table.rows[0]?.querySelectorAll('th, td');
-    // Convert NodeList to Array for forEach compatibility in test environments
-    Array.from(headerCells ?? []).forEach(cell => headers.push(cell.textContent?.trim() || ''));
+    Array.from(headerCells ?? []).forEach((cell) => headers.push(formatTableCell(cell.textContent || '')));
 
-    // Extract rows
+    // Body rows start after the consumed header rows
+    const headerRowCount = table.tHead ? table.tHead.rows.length : 1;
     const rows: string[][] = [];
-    const startRow = headerRow ? 1 : 0;
-    for (let i = startRow; i < table.rows.length; i++) {
+    for (let i = headerRowCount; i < table.rows.length; i++) {
       const cells: string[] = [];
-      Array.from(table.rows[i].querySelectorAll('td, th')).forEach(cell => {
-        cells.push(cell.textContent?.trim() || '');
+      Array.from(table.rows[i].querySelectorAll('td, th')).forEach((cell) => {
+        cells.push(formatTableCell(cell.textContent || ''));
       });
       rows.push(cells);
     }
@@ -118,11 +133,17 @@ function toMarkdown(message: ChatConversation['messages'][number]): string {
   const attachmentLines = attachments.map((attachment) => {
     const details = [attachment.type, attachment.size ? `${attachment.size} bytes` : undefined].filter(Boolean).join(', ');
     const label = details ? `${attachment.name} (${details})` : attachment.name;
+    // 附件名来自站点 DOM，转义 Markdown 链接语法，避免破坏输出结构
+    const escapedLabel = label.replace(/([\[\]])/g, '\\$1');
     // Handle blob: and data: URLs - replace with readable placeholder
     if (attachment.url && (attachment.url.startsWith('blob:') || attachment.url.startsWith('data:'))) {
-      return `- 📎 ${label} (local file)`;
+      return `- 📎 ${escapedLabel} (local file)`;
     }
-    return attachment.url ? `- [${label}](${attachment.url})` : `- ${label}`;
+    const safeUrl = attachment.url
+      ?.replace(/ /g, '%20')
+      .replace(/\(/g, '%28')
+      .replace(/\)/g, '%29');
+    return safeUrl ? `- [${escapedLabel}](${safeUrl})` : `- ${escapedLabel}`;
   });
 
   if (attachmentLines.length === 0) {
