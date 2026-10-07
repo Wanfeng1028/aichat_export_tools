@@ -169,29 +169,15 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function uniqueByText(elements: Element[]): Element[] {
-  const seen = new Set<string>();
-  const deduped: Element[] = [];
-
-  for (const element of elements) {
-    const text = textFromNode(element);
-    if (!text) continue;
-    const key = text.slice(0, 240);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(element);
-  }
-
-  return deduped;
-}
-
-function hasLargeDescendantCandidate(element: Element, selectors: string): boolean {
-  const parentLength = textFromNode(element).length;
-  return Array.from(element.querySelectorAll(selectors)).some((candidate) => {
-    if (candidate === element) return false;
-    const candidateLength = textFromNode(candidate).length;
-    return candidateLength > 0 && candidateLength >= parentLength * 0.8;
-  });
+// 嵌套选择器会同时命中外层容器和内层消息：仅当被包含候选几乎占满外层文本时才视为重复容器，
+// 而不是按文本前缀去重——前缀去重会误删共享开头语的连续消息
+function isRedundantMessageContainer(element: Element, others: Element[]): boolean {
+  const text = textFromNode(element);
+  if (!text) return true;
+  const containedLength = others
+    .filter((other) => other !== element && element.contains(other))
+    .reduce((total, other) => total + textFromNode(other).length, 0);
+  return containedLength >= text.length * 0.6;
 }
 
 function selectConversationRoot(): Element | null {
@@ -204,22 +190,31 @@ function normalizeMessageText(text: string): string {
   return text.replace(/\u200b/g, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function haystackMatchesToken(haystack: string, token: string): boolean {
+  if (/[\u3400-\u9fff]/.test(token)) {
+    return haystack.includes(token);
+  }
+  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(token)}([^a-z0-9]|$)`, 'i').test(haystack);
+}
+
 function resolveMessageRole(element: Element, fallback: MessageRole): MessageRole {
+  // 只看角色语义属性；不把消息正文（自身或前一条）混进判断。class 命中用词边界，
+  // 避免 'me' 匹配 'message'、'you' 匹配 'layout' 这类子串误判
   const haystack = [
     element.getAttribute('data-testid'),
     element.getAttribute('data-message-author-role'),
     element.getAttribute('aria-label'),
     element.getAttribute('class'),
     element.getAttribute('role'),
-    element.previousElementSibling?.textContent,
-    element.parentElement?.getAttribute('aria-label'),
-    element.parentElement?.getAttribute('class')
-  ].join(' ').toLowerCase();
+    element.parentElement?.getAttribute('aria-label')
+  ].filter(Boolean).join(' ').toLowerCase();
 
-  if (MESSAGE_ROLE_HINTS.tool.some((token) => haystack.includes(token))) return 'tool';
-  if (MESSAGE_ROLE_HINTS.assistant.some((token) => haystack.includes(token))) return 'assistant';
-  if (MESSAGE_ROLE_HINTS.user.some((token) => haystack.includes(token))) return 'user';
-  if (MESSAGE_ROLE_HINTS.system.some((token) => haystack.includes(token))) return 'system';
+  const orderedRoles: MessageRole[] = ['tool', 'assistant', 'user', 'system'];
+  for (const role of orderedRoles) {
+    if (MESSAGE_ROLE_HINTS[role].some((token) => haystackMatchesToken(haystack, token))) {
+      return role;
+    }
+  }
   return fallback;
 }
 
@@ -232,17 +227,14 @@ function resolveConversationTitle(config: GenericSiteConfig): string {
   const explicitTitle = textFromNode(document.querySelector('main h1, header h1, h1'));
   if (explicitTitle) return explicitTitle;
 
-  const browserTitle = document.title.replace(/\s*[\-|·|?].*$/, '').trim();
+  const browserTitle = document.title.replace(/\s*[-|·—–]\s*(?:ChatGPT|Claude|Gemini|Kimi|DeepSeek|Grok|Doubao|豆包|通义千问|千问|Qwen|文心一言|Ernie)\s*$/i, '').trim();
   return browserTitle || `${config.label} conversation`;
 }
 
 function collectMessageCandidates(root: Element, config: GenericSiteConfig): Element[] {
   const selectors = [...(config.messageSelectors ?? []), GENERIC_MESSAGE_SELECTOR].join(', ');
-  const candidates = Array.from(root.querySelectorAll(selectors))
-    .filter((element) => textFromNode(element).length >= 8)
-    .filter((element) => !hasLargeDescendantCandidate(element, selectors));
-
-  return uniqueByText(candidates);
+  const candidates = Array.from(root.querySelectorAll(selectors));
+  return candidates.filter((element) => !isRedundantMessageContainer(element, candidates));
 }
 
 function fallbackConversationMessages(root: Element): ChatMessage[] {
@@ -256,7 +248,7 @@ function fallbackConversationMessages(root: Element): ChatMessage[] {
 
   return sections.map((text, index) => ({
     id: `msg-${index + 1}`,
-    role: index % 2 === 0 ? 'assistant' : 'user',
+    role: index % 2 === 0 ? 'user' : 'assistant',
     text
   }));
 }

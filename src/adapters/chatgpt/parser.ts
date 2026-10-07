@@ -42,6 +42,9 @@ const snapshotBlockSelectors = [
   '[role="article"]'
 ].join(', ');
 
+// 只剥站点后缀（如 "标题 - ChatGPT"），不能在第一个 -/| 处全局截断（"C++ - 入门" 会变 "C++ "）
+const BROWSER_TITLE_SUFFIX_PATTERN = /\s*[-|·—–]\s*ChatGPT\s*$/i;
+
 function normalizeRole(role: string | null): MessageRole {
   if (role === 'assistant' || role === 'system' || role === 'tool') {
     return role;
@@ -90,7 +93,7 @@ function isLikelyMessageNode(node: Element): boolean {
     return true;
   }
 
-  if (data.includes('assistant') || data.includes('chatgpt') || data.includes('user') || data.includes('you')) {
+  if (/(^|[^a-z0-9])(assistant|chatgpt|user|you)([^a-z0-9]|$)/.test(data)) {
     return sanitizePlainText(node.textContent ?? '').length > 0;
   }
 
@@ -186,10 +189,28 @@ function pushUniqueAttachment(target: ChatAttachment[], attachment: ChatAttachme
   target.push(attachment);
 }
 
+// 头像/站点图标是每条消息都会有的 UI 图片，不是用户附件
+function isUiImage(image: HTMLImageElement): boolean {
+  const hints = [
+    image.getAttribute('class'),
+    image.getAttribute('alt'),
+    image.getAttribute('aria-label'),
+    image.parentElement?.getAttribute('class')
+  ].join(' ').toLowerCase();
+  if (/(^|[^a-z0-9])(avatar|logo|icon|favicon)([^a-z0-9]|$)/.test(hints)) {
+    return true;
+  }
+  const width = image.width || image.naturalWidth;
+  return width > 0 && width <= 48;
+}
+
 function extractAttachments(node: Element): ChatAttachment[] {
   const attachments: ChatAttachment[] = [];
 
   for (const image of Array.from(node.querySelectorAll<HTMLImageElement>('img[src]'))) {
+    if (isUiImage(image)) {
+      continue;
+    }
     const url = normalizeAttachmentUrl(image.getAttribute('src'));
     const name =
       sanitizePlainText(image.getAttribute('alt') ?? '') ||
@@ -204,15 +225,14 @@ function extractAttachments(node: Element): ChatAttachment[] {
     });
   }
 
+  // 只保留明确指向文件下载的链接；href 含 "download"、class 含 "file"（会命中 profile）这类宽匹配
+  // 会把普通正文链接误报成附件
   const fileSelectors = [
     'a[href][download]',
     'a[href*="/backend-api/files/"]',
-    'a[href*="/files/"]',
-    'a[href*="download"]',
     '[data-testid*="attachment"]',
     '[data-testid*="file"]',
-    '[class*="attachment"]',
-    '[class*="file"]'
+    '[class*="attachment"]'
   ].join(', ');
 
   for (const element of Array.from(node.querySelectorAll<HTMLElement>(fileSelectors))) {
@@ -385,7 +405,7 @@ export function scanChatGptConversationList(documentRef: Document = document): C
     if (currentId) {
       const fallbackTitle =
         sanitizePlainText(documentRef.querySelector(chatGptSelectors.title)?.textContent ?? '') ||
-        sanitizePlainText(documentRef.title.replace(/\s*[-|].*$/, '')) ||
+        sanitizePlainText(documentRef.title.replace(BROWSER_TITLE_SUFFIX_PATTERN, '')) ||
         'Current ChatGPT Conversation';
 
       items.push({
@@ -408,7 +428,7 @@ export function parseChatGptConversation(documentRef: Document = document): Chat
   const title =
     activeSummary?.title ||
     sanitizePlainText(documentRef.querySelector(chatGptSelectors.title)?.textContent ?? '') ||
-    sanitizePlainText(documentRef.title.replace(/\s*[-|].*$/, '')) ||
+    sanitizePlainText(documentRef.title.replace(BROWSER_TITLE_SUFFIX_PATTERN, '')) ||
     'ChatGPT Conversation';
 
   const structuredMessages = extractStructuredMessages(documentRef);

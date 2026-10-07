@@ -111,4 +111,56 @@ describe('GenericDomAdapter', () => {
     expect(conversation?.messages[0]?.text).toContain('Please summarize the quarterly export numbers.');
     expect(conversation?.messages[1]?.text).toContain('Here is the summary of the quarterly export numbers');
   });
+
+  it('does not misclassify roles from message class substrings', async () => {
+    setDocumentUrl('/chat/current');
+    setDocumentMarkup(`
+      <main>
+        <div class="chat-message-item">First message without any role hints at all.</div>
+        <div class="chat-message-item">Second message without any role hints either.</div>
+      </main>
+    `);
+
+    const adapter = createGenericSiteAdapter('claude');
+    const conversation = await adapter?.exportCurrentConversation();
+
+    // class 含 "message" 不得因 'me' 子串被误判为 user；无角色线索时按 user → assistant 兜底
+    expect(conversation?.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
+  });
+
+  it('keeps short messages instead of dropping them', async () => {
+    setDocumentUrl('/chat/current');
+    setDocumentMarkup(`
+      <main>
+        <div class="chat-message-item">好的</div>
+        <div class="chat-message-item">Sure, I will follow up on the deployment plan right away.</div>
+      </main>
+    `);
+
+    const adapter = createGenericSiteAdapter('kimi');
+    const conversation = await adapter?.exportCurrentConversation();
+
+    expect(conversation?.messages.map((message) => message.text)).toEqual([
+      '好的',
+      'Sure, I will follow up on the deployment plan right away.'
+    ]);
+  });
+
+  it('keeps distinct messages that share a long prefix', async () => {
+    const longPrefix = 'Please review the following deployment plan section by section and confirm each step before moving on: ';
+    setDocumentUrl('/chat/current');
+    setDocumentMarkup(`
+      <main>
+        <div class="chat-message-item">${longPrefix}step one is staging.</div>
+        <div class="chat-message-item">${longPrefix}step two is production.</div>
+      </main>
+    `);
+
+    const adapter = createGenericSiteAdapter('kimi');
+    const conversation = await adapter?.exportCurrentConversation();
+
+    expect(conversation?.messages).toHaveLength(2);
+    expect(conversation?.messages[0]?.text).toContain('step one is staging.');
+    expect(conversation?.messages[1]?.text).toContain('step two is production.');
+  });
 });

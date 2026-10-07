@@ -77,6 +77,41 @@ describe('ChatGPT parser', () => {
     ]);
   });
 
+  it('excludes avatar images and plain download links from attachments', () => {
+    window.history.replaceState({}, '', '/c/conv-avatars');
+    setDocumentMarkup(`
+      <main>
+        <h1>Avatar test</h1>
+        <article data-message-id="m1" data-message-author-role="assistant">
+          <div data-testid="conversation-turn-content">
+            <img class="avatar rounded-full" src="/cdn/avatar.png" alt="Profile" />
+            <img src="/cdn/chart.png" alt="chart.png" width="640" />
+            <a href="https://openai.com/download">Download page</a>
+          </div>
+        </article>
+      </main>
+    `, 'Avatar test - ChatGPT');
+
+    const conversation = parseChatGptConversation(document);
+
+    expect(conversation.messages).toHaveLength(1);
+    expect(conversation.messages[0].attachments).toEqual([
+      {
+        name: 'chart.png',
+        type: 'image',
+        url: 'http://localhost:3000/cdn/chart.png'
+      }
+    ]);
+  });
+
+  it('only strips the site suffix from the browser title', () => {
+    window.history.replaceState({}, '', '/c/conv-title');
+    setDocumentMarkup('<main></main>', 'C++ - 入门 - ChatGPT');
+
+    const items = scanChatGptConversationList(document);
+    expect(items[0].title).toBe('C++ - 入门');
+  });
+
   it('uses a system role for snapshot fallback messages', () => {
     window.history.replaceState({}, '', '/c/conv-snapshot');
     setDocumentMarkup(`
