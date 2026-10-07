@@ -78,6 +78,8 @@ npm test
 4. 运行 `npm run build`。
 5. 提交 Pull Request，并附上验证说明。
 
+> **AI 编码代理例外**：请遵循根目录 [`AGENTS.md`](./AGENTS.md) 的「本机零验证」——不在本地运行测试与构建，直接提交推送，以 CI 结论为准。上述第 3–4 步仅面向人类贡献者。
+
 ### 适配器开发指南
 
 为新的 AI 平台开发适配器时，请遵循以下步骤：
@@ -203,6 +205,8 @@ npm test
 3. Run `npm test`.
 4. Run `npm run build`.
 5. Open a pull request with validation notes.
+
+> **AI coding agents**: follow [`AGENTS.md`](./AGENTS.md) ("zero local verification") — do not run tests or builds locally; commit, push, and let CI be the judge. Steps 3–4 apply to human contributors only.
 
 ### Adapter Development Guide
 
