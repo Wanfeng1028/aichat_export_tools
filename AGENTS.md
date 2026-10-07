@@ -1,7 +1,7 @@
 # AGENTS.md — AI 编码代理工作规范
 
 > 本文件面向**任何在本仓库工作的 AI 编码代理**（ZCode / Claude Code / Codex / Qwen Code / opencode 等）。
-> 进入本仓库后请先完整阅读本文件，再按需阅读 [docs/architecture.md](./docs/architecture.md)（架构）与 [docs/adapters.md](./docs/adapters.md)（站点适配）。
+> 进入本仓库后请先完整阅读本文件，再按需阅读 [ARCHITECTURE.md](./ARCHITECTURE.md)（架构）、[DESIGN.md](./DESIGN.md)（视觉）与 [docs/adapters.md](./docs/adapters.md)（站点适配）。
 > 与仓库内其他文档冲突时，**以本文件为准**。
 
 ## 版本记录
@@ -9,6 +9,7 @@
 | 版本 | 日期 | 修改人 | 修改摘要 |
 | --- | --- | --- | --- |
 | v1.0 | 2026-10-07 | AI 编写：ZCode CLI · GLM-5.3-Flash（account:zai-start-plan/GLM-5.3-Flash）；发起：晚风（Wanfeng1028，审核） | 初稿：确立「本机零验证」与「本机禁止一切下载」两大硬性约定 |
+| v1.1 | 2026-10-07 | AI 编写：ZCode CLI · GLM-5.3-Flash（account:zai-start-plan/GLM-5.3-Flash）；发起：晚风（Wanfeng1028，审核） | 引言改为指向根目录 ARCHITECTURE.md / DESIGN.md；配套新增文档套件（ARCHITECTURE.md / DESIGN.md / CHANGELOG.md / QWEN.md） |
 
 ## 1. 项目上下文（30 秒版）
 
